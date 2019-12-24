@@ -7,6 +7,7 @@ from taurex.log import Logger
 from pycuda.gpuarray import GPUArray, to_gpu
 from pycuda.compiler import SourceModule
 import math
+from taurex.cache import OpacityCache
 
 
 class CudaOpacity(Logger):
