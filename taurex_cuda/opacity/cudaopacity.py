@@ -109,8 +109,8 @@ class CudaOpacity(Logger):
             P_max.append(pmax)
             M.append(m)
         
-        return np.array(T_min,dtype=np.int),np.array(T_max,dtype=np.int),np.array(P_min,dtype=np.int), \
-               np.array(P_max,dtype=np.int), np.array(M,dtype=np.float64)
+        return np.array(T_min,dtype=np.int32),np.array(T_max,dtype=np.int32),np.array(P_min,dtype=np.int32), \
+               np.array(P_max,dtype=np.int32), np.array(M,dtype=np.float64)
         
         
         

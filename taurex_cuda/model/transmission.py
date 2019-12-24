@@ -97,8 +97,8 @@ class TransmissionCudaModel(SimpleForwardModel):
 
     def build(self):
         super().build()
-        self._startK = to_gpu(np.array([0 for x in range(self.nLayers)]))
-        self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]))
+        self._startK = to_gpu(np.array([0 for x in range(self.nLayers)]).astype(np.int32))
+        self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]).astype(np.int32))
         self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
 
