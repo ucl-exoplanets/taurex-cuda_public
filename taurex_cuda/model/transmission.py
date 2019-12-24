@@ -2,7 +2,11 @@ import numpy as np
 from taurex.model.simplemodel import SimpleForwardModel
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
+import pycuda.driver as drv
 from pycuda.gpuarray import GPUArray, to_gpu, zeros
+from functools import lru_cache
+import math
+
 
 class TransmissionCudaModel(SimpleForwardModel):
     """
@@ -89,7 +93,14 @@ class TransmissionCudaModel(SimpleForwardModel):
 
             dl[layer, :k.shape[0]] = (k*2.0)[:]
 
-        return to_gpu(dl)
+        return self._path_length.set(dl)
+
+    def build(self):
+        super().build()
+        self._startK = to_gpu(np.array([0 for x in range(self.nLayers)]))
+        self._endK = to_gpu(np.array([100-x for x in range(self.nLayers)]))
+        self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
+        self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
 
     def path_integral(self, wngrid, return_contrib):
 
@@ -97,33 +108,73 @@ class TransmissionCudaModel(SimpleForwardModel):
 
         wngrid_size = wngrid.shape[0]
 
-        path_length = self.compute_path_length(dz)
+        self.compute_path_length(dz)
 
         density_profile = to_gpu(self.densityProfile)
 
         total_layers = self.nLayers
 
-        startK = to_gpu(np.array([0 for x in range(total_layers)]))
-        endK = to_gpu(np.array([100-x for x in range(total_layers)]))
-        density_offset = to_gpu(np.array(list(range(total_layers))))
+
         tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64)
+        rprs = zeros(shape=(wngrid_size), dtype=np.float64)
         for contrib in self.contribution_list:
-            contrib.contribute(self, startK, endK, density_offset, 0,
-                                   density_profile, tau, path_length=path_length)
+            contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
+                                   density_profile, tau, path_length=self._path_length)
+        
+        self.compute_absorption(rprs,tau, dz)
+        return rprs.get(), tau.get()#absorption, tau #absorption, tau
+
+    @lru_cache(maxsize=4)
+    def _absorption_kernal(self, nlayers, ngrid):
+
+        code = f"""
+
+        __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
+                                           const double* __restrict__ dz, 
+                                           const double* __restrict__ altitude,
+                                           const double pradius, const double sradius)
+        {{
+            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+            if (i >= {ngrid})
+                return;
+
+            double integral = 0.0;
+            for (int layer=0; layer < {nlayers}; layer++)
+            {{
+                double etau = exp(-tau[layer*{ngrid} + i]);
+                double _dz = dz[layer];
+                double ap = altitude[layer];
+                integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
+                tau[layer*{ngrid} + i] = etau;
+            }}
+            dest[i] = (pradius*pradius + integral)/(sradius*sradius);
+
+        }}
+        """
+        mod = SourceModule(code)
+        return mod.get_function('compute_absorption')
 
 
-        #self.debug('tau %s %s', tau, tau.shape)
+    def compute_absorption(self, rprs, tau, dz):
 
-        #absorption, tau = self.compute_absorption(tau, dz)
-        return None,tau #absorption, tau
+        grid_size = tau.shape[-1]
+        rprs_kernal = self._absorption_kernal(self.nLayers, grid_size)
 
-    def compute_absorption(self, tau, dz):
+        THREAD_PER_BLOCK_X = 256
+        NUM_BLOCK_X = int(math.ceil(grid_size/THREAD_PER_BLOCK_X))
 
-        tau = np.exp(-tau)
-        ap = self.altitudeProfile[:, None]
-        pradius = self._planet.fullRadius
-        sradius = self._star.radius
-        _dz = dz[:, None]
+        rprs_kernal(rprs, tau, drv.In(dz), drv.In(self.altitudeProfile),
+                    np.float64(self._planet.fullRadius),
+                    np.float64(self._star.radius),
+                    block=(THREAD_PER_BLOCK_X, 1, 1),
+                    grid=(NUM_BLOCK_X, 1, 1))
 
-        integral = np.sum((pradius+ap)*(1.0-tau)*_dz*2.0, axis=0)
-        return ((pradius**2.0) + integral)/(sradius**2), tau
+        # tau = np.exp(-tau.get())
+        # ap = self.altitudeProfile[:, None]
+        # pradius = self._planet.fullRadius
+        # sradius = self._star.radius
+        # _dz = dz[:, None]
+
+        # integral = np.sum((pradius+ap)*(1.0-tau)*_dz*2.0, axis=0)
+        # return ((pradius**2.0) + integral)/(sradius**2), tau

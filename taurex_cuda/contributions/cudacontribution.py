@@ -39,6 +39,7 @@ def _contribute_tau_kernal(nlayers, grid_size):
                                    const int* __restrict__ density_offset)
     {{
         unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        
         if ( i >= {grid_size} )
             return;
         
@@ -50,7 +51,7 @@ def _contribute_tau_kernal(nlayers, grid_size):
             {{
                 double _path = path[layer*{nlayers} + k];
                 double _density = density[k+density_offset[layer]];
-                dest[layer*{grid_size} + i] = sigma[(k+layer)*{grid_size} + i]*_path*_density;
+                dest[layer*{grid_size} + i] += sigma[(k+layer)*{grid_size} + i]*_path*_density;
             }}
             
         }}

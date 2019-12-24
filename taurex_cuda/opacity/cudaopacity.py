@@ -30,9 +30,9 @@ class CudaOpacity(Logger):
         min_grid_idx = 0
         max_grid_idx = len(self._wngrid)
         if min_wn is not None:
-            min_grid_idx = self._wngrid.searchsorted(min_wn,side="right")
+            min_grid_idx = max(np.argmax(min_wn<self._wngrid)-1,0)
         if max_wn is not None:
-            max_grid_idx = self._wngrid.searchsorted(max_wn,side="right")
+            max_grid_idx = np.argmax(self._wngrid>=max_wn)+1
         grid_length = self._wngrid[min_grid_idx:max_grid_idx].shape[0]
         return self.kernal_func(self._nlayers, min_grid_idx, grid_length), grid_length
         
@@ -129,7 +129,7 @@ class CudaOpacity(Logger):
     
     
     def opacity(self, temperature, pressure, mix, wngrid=None, dest=None):
-        
+
         T_min, T_max, P_min, P_max, mix = \
             self.compile_temperature_pressure_mix(temperature, pressure, mix)
         
