@@ -18,14 +18,13 @@ class CudaOpacity(Logger):
         self._wngrid = self._xsec.wavenumberGrid
         self._lenP = len(self._xsec.pressureGrid)
         self._lenT = len(self._xsec.temperatureGrid)
-        self._nlayers = 100
         self.info('Transfering xsec grid to GPU')
         self._gpu_grid = GPUArray(shape=self._xsec.xsecGrid.shape,dtype=self._xsec.xsecGrid.dtype )
         self._gpu_grid.set(self._xsec.xsecGrid)
         self._gpu_tgrid = to_gpu(self._xsec.temperatureGrid)
         self._gpu_pgrid = to_gpu(self._xsec.pressureGrid)
-        self._get_kernal_function.cache_clear()
-    @lru_cache(maxsize=4)
+        self.kernal_func.cache_clear()
+    
     def _get_kernal_function(self, nlayers=100, min_wn=None, max_wn=None):
         min_grid_idx = 0
         max_grid_idx = len(self._wngrid)
@@ -34,8 +33,9 @@ class CudaOpacity(Logger):
         if max_wn is not None:
             max_grid_idx = np.argmax(self._wngrid>=max_wn)+1
         grid_length = self._wngrid[min_grid_idx:max_grid_idx].shape[0]
-        return self.kernal_func(self._nlayers, min_grid_idx, grid_length), grid_length
-        
+        return self.kernal_func(nlayers, min_grid_idx, grid_length), grid_length
+    
+    @lru_cache(maxsize=4)
     def kernal_func(self, nlayers, min_idx, grid_length):
         
         
