@@ -2,6 +2,9 @@ from functools import lru_cache
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
 from pycuda.gpuarray import GPUArray
+import numpy as np
+import math
+import pycuda.driver as drv
 
 @lru_cache(maxsize=1)
 def _blackbody_module():
@@ -38,7 +41,7 @@ def cuda_blackbody(lamb, temperature, out=None):
         my_out = GPUArray(shape=(temperature.shape[0],lamb.shape[0]),dtype=np.float64)
     
     grid_length = lamb.shape[0]
-    nlayers= temperature.shape[0]
+    nlayers = temperature.shape[0]
     
     THREAD_PER_BLOCK_X = 16
     THREAD_PER_BLOCK_Y = 16
