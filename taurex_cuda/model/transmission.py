@@ -6,7 +6,7 @@ import pycuda.driver as drv
 from pycuda.gpuarray import GPUArray, to_gpu, zeros
 from functools import lru_cache
 import math
-
+import pycuda.tools as pytools
 
 class TransmissionCudaModel(SimpleForwardModel):
     """
@@ -101,7 +101,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]).astype(np.int32))
         self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
-
+        self._memory_pool = pytools.DeviceMemoryPool()
     def path_integral(self, wngrid, return_contrib):
 
         dz = np.gradient(self.altitudeProfile)
@@ -110,13 +110,13 @@ class TransmissionCudaModel(SimpleForwardModel):
 
         self.compute_path_length(dz)
 
-        density_profile = to_gpu(self.densityProfile)
+        density_profile = to_gpu(self.densityProfile,allocator=self._memory_pool.allocate)
 
         total_layers = self.nLayers
 
 
-        tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64)
-        rprs = zeros(shape=(wngrid_size), dtype=np.float64)
+        tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
+        rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         for contrib in self.contribution_list:
             contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
                                    density_profile, tau, path_length=self._path_length)

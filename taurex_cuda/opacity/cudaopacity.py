@@ -134,11 +134,9 @@ class CudaOpacity(Logger):
             self.compile_temperature_pressure_mix(temperature, pressure, mix)
         
         nlayers = len(temperature)
-        
         compute_kernal, grid_length = self.kernal(nlayers=nlayers,wngrid=wngrid)
         
         my_dest = dest
-        
         if my_dest is None:
             my_dest = GPUArray(shape=(nlayers, grid_length),dtype=np.float64) 
         
@@ -151,6 +149,6 @@ class CudaOpacity(Logger):
         compute_kernal(my_dest, self._gpu_grid,self._gpu_tgrid,self._gpu_pgrid, drv.In(temperature), drv.In(pressure),
                        drv.In(T_min), drv.In(T_max), drv.In(P_min), drv.In(P_max), drv.In(mix),
                       block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
-        
-        return my_dest
+        if dest is None:
+            return my_dest
         
