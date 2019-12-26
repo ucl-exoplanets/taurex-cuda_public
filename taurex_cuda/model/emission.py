@@ -88,7 +88,7 @@ class EmissionCudaModel(SimpleForwardModel):
         self._dz = zeros(shape=(self.nLayers,self.nLayers, ),dtype=np.float64)
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
         self._memory_pool = pytools.DeviceMemoryPool()
-
+        self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
     @lru_cache(maxsize=4)
     def _gen_ngauss_kernal(self, ngauss, nlayers, grid_size):
         from taurex.constants import PI
@@ -99,7 +99,7 @@ class EmissionCudaModel(SimpleForwardModel):
         code = f"""
 
         __global__ void quadrature_kernal(double* __restrict__ dest, 
-                                          const double* __restrict__ layer_tau, 
+                                          double* __restrict__ layer_tau, 
                                           const double* __restrict__ dtau, 
                                           const double* __restrict__ BB)
         {{
@@ -116,8 +116,9 @@ class EmissionCudaModel(SimpleForwardModel):
                 double _dtau = dtau[layer*{grid_size} + i];
                 double _layer_tau = layer_tau[layer*{grid_size} + i];
                 double _BB = BB[layer*{grid_size} + i]*{1.0/PI};
-                
+                layer_tau[layer*{grid_size} + i] = exp(-_layer_tau) - exp(-_dtau);
                 _dtau += _layer_tau;
+                
                 if (layer == 0){{
 
 
@@ -183,7 +184,9 @@ class EmissionCudaModel(SimpleForwardModel):
         integral_kernal(I, layer_tau, dtau, BB,
                       block=(THREAD_PER_BLOCK_X, 1,1), grid=(NUM_BLOCK_X, 1, 1) )
 
-        return self.compute_final_flux(I.get()), None
+        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
+
+        return self.compute_final_flux(I.get()), self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
 
 
     def compute_final_flux(self, f_total):

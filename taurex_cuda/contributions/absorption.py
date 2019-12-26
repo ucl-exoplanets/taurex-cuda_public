@@ -1,6 +1,5 @@
 from .cudacontribution import CudaContribution
 import numpy as np
-from taurex.cache import OpacityCache
 from ..opacity.cudacache import CudaOpacityCache
 from pycuda.gpuarray import GPUArray
 from pycuda.tools import DeviceMemoryPool

@@ -102,6 +102,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
         self._memory_pool = pytools.DeviceMemoryPool()
+        self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
     def path_integral(self, wngrid, return_contrib):
 
         dz = np.gradient(self.altitudeProfile)
@@ -122,7 +123,10 @@ class TransmissionCudaModel(SimpleForwardModel):
                                    density_profile, tau, path_length=self._path_length)
         
         self.compute_absorption(rprs,tau, dz)
-        return rprs.get(), tau.get()#absorption, tau #absorption, tau
+        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+
+
+        return rprs.get(), self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)#absorption, tau #absorption, tau
 
     @lru_cache(maxsize=4)
     def _absorption_kernal(self, nlayers, ngrid):
