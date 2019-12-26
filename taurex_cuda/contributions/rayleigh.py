@@ -112,3 +112,7 @@ class RayleighCuda(CudaContribution):
 
                 self.sigma_xsec = sigma_xsec
                 yield gasname, sigma_xsec
+
+    @classmethod
+    def input_keywords(cls):
+        return ['RayleighCUDA', ]
