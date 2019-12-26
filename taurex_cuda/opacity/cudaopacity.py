@@ -35,6 +35,7 @@ class CudaOpacity(Logger):
                          bounds_error=False,fill_value=0.0, assume_sorted=True)
             xsecgrid = f(wngrid).ravel().reshape(*xsecgrid.shape[0:-1],-1) # Force contiguous array
 
+        self._strides = xsecgrid.strides
         self._gpu_grid = GPUArray(shape=xsecgrid.shape,dtype=xsecgrid.dtype )
         self._gpu_grid.set(xsecgrid)
         self.kernal_func.cache_clear()
@@ -82,10 +83,10 @@ class CudaOpacity(Logger):
             double T = temperature[j];
             double P = pressure[j];
             double mix = mix_ratio[j];
-            double _x11 = xsec_grid[Pmin_idx*{self._xsec.xsecGrid.strides[0]//8} + Tmin_idx*{self._xsec.xsecGrid.strides[1]//8} + i + {min_idx}];
-            double _x12 = xsec_grid[Pmin_idx*{self._xsec.xsecGrid.strides[0]//8} + Tmax_idx*{self._xsec.xsecGrid.strides[1]//8} + i + {min_idx}];
-            double _x21 = xsec_grid[Pmax_idx*{self._xsec.xsecGrid.strides[0]//8} + Tmin_idx*{self._xsec.xsecGrid.strides[1]//8} + i + {min_idx}];
-            double _x22 = xsec_grid[Pmax_idx*{self._xsec.xsecGrid.strides[0]//8} + Tmax_idx*{self._xsec.xsecGrid.strides[1]//8} + i + {min_idx}];
+            double _x11 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
+            double _x12 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
+            double _x21 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
+            double _x22 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
             dest[j*{grid_length} + i] =((_x11*(Pmax_val - Pmin_val)*(Tmax_val - Tmin_val) - (P - Pmin_val)*(Tmax_val - Tmin_val)*(_x11 - _x21) - (T - Tmin_val)*(-(P - Pmin_val)*(_x11 - _x21) + 
                                         (P - Pmin_val)*(_x12 - _x22) + (Pmax_val - Pmin_val)*(_x11 - _x12)))/
                                         ((Pmax_val - Pmin_val)*(Tmax_val - Tmin_val)))*mix/10000.0;
