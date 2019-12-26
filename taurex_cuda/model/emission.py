@@ -182,7 +182,7 @@ class EmissionCudaModel(SimpleForwardModel):
         NUM_BLOCK_X = int(math.ceil(wngrid_size/THREAD_PER_BLOCK_X))
         
         integral_kernal(I, layer_tau, dtau, BB,
-                      block=(THREAD_PER_BLOCK_X, 1,1), grid=(NUM_BLOCK_X, 1, 1) )
+                      block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
 
