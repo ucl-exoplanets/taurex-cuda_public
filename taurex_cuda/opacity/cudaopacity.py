@@ -57,7 +57,7 @@ class CudaOpacity(Logger):
         
         code = f"""
         
-        __global__ void interp_mix_layers(double* dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
+        __global__ void interp_mix_layers(double* __restrict__ dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
                                          const double* __restrict__ pgrid, const double* __restrict__ temperature,
                                       const double* __restrict__ pressure, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
                                       const int* __restrict__ Pmin, const int* __restrict__ Pmax, const double * __restrict__ mix_ratio)

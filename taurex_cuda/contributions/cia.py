@@ -165,7 +165,7 @@ class CIACuda(CudaContribution):
         for pairName in self.ciaPairs:
             xsec = self._opacity_cache[pairName]
             cia = xsec._xsec
-            cia_factor = chemistry.get_gas_mix_profile(cia.pairOne) *chemistry.get_gas_mix_profile(cia.pairTwo)
+            cia_factor = chemistry.get_gas_mix_profile(cia.pairOne) * chemistry.get_gas_mix_profile(cia.pairTwo)
 
             # Get the cross section object relating to the gas
             
