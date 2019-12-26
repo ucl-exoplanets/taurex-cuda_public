@@ -12,19 +12,33 @@ from taurex.cache import OpacityCache
 
 class CudaOpacity(Logger):
     
-    def __init__(self, molecule_name):
+    def __init__(self, molecule_name, wngrid=None):
         super().__init__(self.__class__.__name__)
         self._xsec = OpacityCache()[molecule_name]
-        self._wngrid = self._xsec.wavenumberGrid
+
         self._lenP = len(self._xsec.pressureGrid)
         self._lenT = len(self._xsec.temperatureGrid)
         self.info('Transfering xsec grid to GPU')
-        self._gpu_grid = GPUArray(shape=self._xsec.xsecGrid.shape,dtype=self._xsec.xsecGrid.dtype )
-        self._gpu_grid.set(self._xsec.xsecGrid)
         self._gpu_tgrid = to_gpu(self._xsec.temperatureGrid)
         self._gpu_pgrid = to_gpu(self._xsec.pressureGrid)
+
+        self.transfer_xsec_grid(wngrid)
+    def transfer_xsec_grid(self, wngrid):
+
+        self._wngrid = self._xsec.wavenumberGrid
+        xsecgrid = self._xsec.xsecGrid
+
+        if wngrid is not None:
+            from scipy.interpolate import interp1d
+            self._wngrid = wngrid
+            f = interp1d(self._xsec.wavenumberGrid, self._xsec.xsecGrid, copy=False,
+                         bounds_error=False,fill_value=0.0, assume_sorted=True)
+            xsecgrid = f(wngrid).ravel().reshape(*xsecgrid.shape[0:-1],-1) # Force contiguous array
+
+        self._gpu_grid = GPUArray(shape=xsecgrid.shape,dtype=xsecgrid.dtype )
+        self._gpu_grid.set(xsecgrid)
         self.kernal_func.cache_clear()
-    
+
     def _get_kernal_function(self, nlayers=100, min_wn=None, max_wn=None):
         min_grid_idx = 0
         max_grid_idx = len(self._wngrid)

@@ -3,7 +3,7 @@ import numpy as np
 from taurex.cache import OpacityCache
 from ..opacity.cudacache import CudaOpacityCache
 from pycuda.gpuarray import GPUArray
-
+from pycuda.tools import DeviceMemoryPool
 
 class AbsorptionCuda(CudaContribution):
     """
@@ -15,6 +15,11 @@ class AbsorptionCuda(CudaContribution):
         super().__init__('Absorption')
         self._opacity_cache = CudaOpacityCache()
         self._xsec_cache = {}
+        self._memory_pool = DeviceMemoryPool()
+
+    def build(self, model):
+        super().build(model)
+        self._opacity_cache.set_native_grid(model.nativeWavenumberGrid)
 
     def prepare_each(self, model, wngrid):
         """
@@ -38,7 +43,7 @@ class AbsorptionCuda(CudaContribution):
 
         self.debug('Preparing model with %s', wngrid.shape)
         self._ngrid = wngrid.shape[0]
-        sigma_xsec = GPUArray(shape=(model.nLayers, wngrid.shape[0]), dtype=np.float64)
+        sigma_xsec = GPUArray(shape=(model.nLayers, wngrid.shape[0]), dtype=np.float64, allocator=self._memory_pool.allocate)
         # Loop through all active gases
         for gas in model.chemistry.activeGases:
 

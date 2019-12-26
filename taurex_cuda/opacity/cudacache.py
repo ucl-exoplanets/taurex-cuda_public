@@ -1,12 +1,24 @@
 from .cudaopacity import CudaOpacity
 from taurex.cache.singleton import Singleton
 from taurex.log import Logger
-
+import numpy as np
 
 class CudaOpacityCache(Singleton):
     def init(self):
         self.opacity_dict = {}
         self.log = Logger('CudaCache') 
+        self._wngrid = None
+    
+    def set_native_grid(self, native_grid):
+        if self._wngrid is None or \
+            not np.array_equal(native_grid, self._wngrid):
+
+            self.log.info('Re-homogenizing native grids!')
+            self._wngrid = native_grid
+
+            for opac in self.opacity_dict.values():
+                opac.transfer_xsec_grid(self._wngrid)
+
 
 
     def __getitem__(self,key):
@@ -34,7 +46,7 @@ class CudaOpacityCache(Singleton):
             return self.opacity_dict[key]
         else:
             #Try a load of the opacity
-            self.opacity_dict[key] = CudaOpacity(key)
+            self.opacity_dict[key] = CudaOpacity(key, wngrid=self._wngrid)
             return self.opacity_dict[key]
     def clear_cache(self):
         """
