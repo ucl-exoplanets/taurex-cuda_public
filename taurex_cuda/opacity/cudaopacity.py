@@ -21,7 +21,7 @@ class CudaOpacity(Logger):
         self.info('Transfering xsec grid to GPU')
         self._gpu_tgrid = to_gpu(self._xsec.temperatureGrid)
         self._gpu_pgrid = to_gpu(self._xsec.pressureGrid)
-
+        self._memory_pool = drv.DeviceMemoryPool()
         self.transfer_xsec_grid(wngrid)
     def transfer_xsec_grid(self, wngrid):
 
@@ -110,22 +110,18 @@ class CudaOpacity(Logger):
             return self._get_kernal_function(nlayers, min_wngrid, max_wngrid)
 
     def compile_temperature_pressure_mix(self, temperature, pressure, mix):
-        T_min = []
-        P_min = []
-        T_max = []
-        P_max = []
-        M = []
         
-        for t, p, m in zip(temperature, pressure, mix):
-            tmn,tmax, pmn, pmax = self.find_closest_index(t, p)
-            T_min.append(tmn)
-            P_min.append(pmn)
-            T_max.append(tmax)
-            P_max.append(pmax)
-            M.append(m)
+        T_min = np.digitize(temperature, self._xsec.temperatureGrid).astype(np.int32)-1
+        np.clip(T_min, 0, self._lenT-1,out=T_min)
+        T_max = T_min+1
+        np.clip(T_max, 0, self._lenT-1,out=T_max)
+        P_min = np.digitize(pressure, self._xsec.pressureGrid).astype(np.int32)-1
+        np.clip(P_min, 0, self._lenP-1,out=P_min)
+        P_max = P_min+1
+        np.clip(P_max, 0, self._lenP-1,out=P_max)
         
-        return np.array(T_min,dtype=np.int32),np.array(T_max,dtype=np.int32),np.array(P_min,dtype=np.int32), \
-               np.array(P_max,dtype=np.int32), np.array(M,dtype=np.float64)
+        
+        return T_min, T_max, P_min, P_max, mix
         
         
         
