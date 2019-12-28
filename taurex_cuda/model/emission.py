@@ -8,6 +8,7 @@ from functools import lru_cache
 import math
 from ..utils.emission import cuda_blackbody
 import pycuda.tools as pytools
+from taurex_cuda.contributions.cudacontribution import CudaContribution
 
 class EmissionCudaModel(SimpleForwardModel):
     """
@@ -68,11 +69,14 @@ class EmissionCudaModel(SimpleForwardModel):
                          atm_max_pressure)
 
         self.set_num_gauss(ngauss)
-
+        self.set_num_streams(1)
     def set_num_gauss(self, value):
         self._ngauss = int(value)
-
-
+        mu, weight = np.polynomial.legendre.leggauss(self._ngauss*2)
+        self._mu_quads = mu[self._ngauss:]
+        self._wi_quads = weight[self._ngauss:]
+    def set_num_streams(self, num_streams):
+        self._streams = [drv.Stream() for x in range(num_streams)]
 
     def build(self):
         super().build()
@@ -89,7 +93,6 @@ class EmissionCudaModel(SimpleForwardModel):
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
         self._memory_pool = pytools.DeviceMemoryPool()
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
-        self._streams = [drv.Stream() for x in range(4)]
 
     @lru_cache(maxsize=4)
     def _gen_ngauss_kernal(self, ngauss, nlayers, grid_size):
@@ -163,14 +166,21 @@ class EmissionCudaModel(SimpleForwardModel):
         density_profile = to_gpu(self.densityProfile, allocator=self._memory_pool.allocate)
         total_layers = self.nLayers
 
+        self._cuda_contribs = [c for c in self.contribution_list if isinstance(c, CudaContribution)]
+        self._noncuda_contribs = [c for c in self.contribution_list if not isinstance(c, CudaContribution)]
+        self._fully_cuda = len(self._noncuda_contribs) == 0  
+
         layer_tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         dtau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         BB = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         I = zeros(shape=(wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         cuda_blackbody(wngrid, temperature, out=BB)
 
+        if not self._fully_cuda:
+            self.fallback_noncuda(layer_tau, dtau,wngrid,total_layers)
 
-        for contrib in self.contribution_list:
+
+        for contrib in self._cuda_contribs:
             contrib.contribute(self, self._start_layer, self._end_layer, self._density_offset, 0,
                                 density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True, streams=self._streams)
             contrib.contribute(self, self._start_dtau, self._end_dtau, self._density_offset, 0,
@@ -185,11 +195,40 @@ class EmissionCudaModel(SimpleForwardModel):
         integral_kernal(I, layer_tau, dtau, BB,
                       block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
+
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
+        final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+        final_I= I.get()
 
-        return self.compute_final_flux(I.get()), self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+        return self.compute_final_flux(final_I), final_tau 
 
+    def fallback_noncuda(self, gpu_layer_tau, gpu_dtau, wngrid, total_layers):
+        from taurex.util.emission import black_body
+        from taurex.constants import PI
 
+        wngrid_size = wngrid.shape[0]
+        dz = np.gradient(self.altitudeProfile)
+
+        density = self.densityProfile
+        layer_tau = np.zeros(shape=(total_layers, wngrid_size))
+        dtau = np.zeros(shape=(total_layers, wngrid_size))
+        _dtau = np.zeros(shape=(1, wngrid_size))
+        _layer_tau = np.zeros(shape=(1, wngrid_size))
+        # Loop upwards
+        for layer in range(total_layers):
+            _layer_tau[...] = 0.0
+            _dtau[...] = 0.0
+            for contrib in self._noncuda_contribs:
+                contrib.contribute(self, layer+1, total_layers,
+                                   0, 0, density, _layer_tau, path_length=dz)
+                contrib.contribute(self, layer, layer+1, 0,
+                                   0, density, _dtau, path_length=dz)
+            
+            layer_tau[layer,:] += _layer_tau[0]
+            dtau[layer,:] += _dtau[0]
+
+        gpu_layer_tau.set(layer_tau)
+        gpu_dtau.set(dtau)
     def compute_final_flux(self, f_total):
         star_sed = self._star.spectralEmissionDensity
 

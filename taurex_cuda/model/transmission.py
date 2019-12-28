@@ -7,6 +7,8 @@ from pycuda.gpuarray import GPUArray, to_gpu, zeros
 from functools import lru_cache
 import math
 import pycuda.tools as pytools
+from taurex_cuda.contributions.cudacontribution import CudaContribution
+
 
 class TransmissionCudaModel(SimpleForwardModel):
     """
@@ -54,7 +56,8 @@ class TransmissionCudaModel(SimpleForwardModel):
                  chemistry=None,
                  nlayers=100,
                  atm_min_pressure=1e-4,
-                 atm_max_pressure=1e6):
+                 atm_max_pressure=1e6,
+                 num_streams=1):
 
         super().__init__(self.__class__.__name__, planet,
                          star,
@@ -65,6 +68,8 @@ class TransmissionCudaModel(SimpleForwardModel):
                          atm_min_pressure,
                          atm_max_pressure)
 
+        self.set_num_streams(num_streams)
+
     def compute_path_length(self, dz):
 
         
@@ -73,7 +78,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         total_layers = self.nLayers
 
         dl = np.zeros(shape=(total_layers, total_layers),dtype=np.float64)
-
+        cpu_dl = []
         z = self.altitudeProfile
         self.debug('Computing path_length: \n z=%s \n dz=%s', z, dz)
 
@@ -91,11 +96,19 @@ class TransmissionCudaModel(SimpleForwardModel):
                               z[layer:self.nLayers-1] +
                               dz[layer:self.nLayers-1]/2)**2 - p)
 
-            dl[layer, :k.shape[0]] = (k*2.0)[:]
+            final_k = k*2.0
+            dl[layer, :k.shape[0]] = (final_k)[:]
+            cpu_dl.append(final_k)
 
-        return self._path_length.set(dl)
+        self._path_length.set(dl)
+        return cpu_dl
+
+
+    def set_num_streams(self, num_streams):
+        self._streams = [drv.Stream() for x in range(num_streams)]
 
     def build(self):
+        
         super().build()
         self._startK = to_gpu(np.array([0 for x in range(self.nLayers)]).astype(np.int32))
         self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]).astype(np.int32))
@@ -104,32 +117,52 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._memory_pool = pytools.DeviceMemoryPool()
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
-        self._streams = [drv.Stream() for x in range(4)]
+        
+
+
     def path_integral(self, wngrid, return_contrib):
 
         dz = np.gradient(self.altitudeProfile)
 
         wngrid_size = wngrid.shape[0]
 
-        self.compute_path_length(dz)
+        cpu_dl = self.compute_path_length(dz)
 
         density_profile = to_gpu(self.densityProfile,allocator=self._memory_pool.allocate)
 
         total_layers = self.nLayers
 
+        self._cuda_contribs = [c for c in self.contribution_list if isinstance(c, CudaContribution)]
+        self._noncuda_contribs = [c for c in self.contribution_list if not isinstance(c, CudaContribution)]
+        self._fully_cuda = len(self._noncuda_contribs) == 0    
+
+
 
         tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
-        for contrib in self.contribution_list:
+
+        
+        for contrib in self._cuda_contribs:
             contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
                                    density_profile, tau, path_length=self._path_length,streams=self._streams)
         
         drv.Context.synchronize()
-        self.compute_absorption(rprs,tau, dz)
-        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+        final_tau = None
+        final_rprs = None
+        
+        if self._fully_cuda:
+            self.compute_absorption(rprs,tau, dz)
+            drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+            
+            final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+            final_rprs = rprs.get()
+        else:
+            drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+            final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+            final_rprs, final_tau = self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,
+                                                          dz,final_tau)
 
-
-        return rprs.get(), self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)#absorption, tau #absorption, tau
+        return final_rprs, final_tau
 
     @lru_cache(maxsize=4)
     def _absorption_kernal(self, nlayers, ngrid):
@@ -162,6 +195,31 @@ class TransmissionCudaModel(SimpleForwardModel):
         mod = SourceModule(code)
         return mod.get_function('compute_absorption')
 
+    def fallback_noncuda(self, total_layers, path_length, density_profile,
+                         dz, tau):
+        for layer in range(total_layers):
+
+            self.debug('Computing layer %s', layer)
+            dl = path_length[layer]
+
+            endK = total_layers-layer
+
+            for contrib in self._noncuda_contribs:
+                self.debug('Adding contribution from %s', contrib.name)
+                contrib.contribute(self, 0, endK, layer, layer,
+                                   density_profile, tau, path_length=dl)
+        return self.compute_absorption_cpu(tau, dz)
+
+    def compute_absorption_cpu(self, tau, dz):
+
+        tau = np.exp(-tau)
+        ap = self.altitudeProfile[:, None]
+        pradius = self._planet.fullRadius
+        sradius = self._star.radius
+        _dz = dz[:, None]
+
+        integral = np.sum((pradius+ap)*(1.0-tau)*_dz*2.0, axis=0)
+        return ((pradius**2.0) + integral)/(sradius**2), tau
 
     def compute_absorption(self, rprs, tau, dz):
 

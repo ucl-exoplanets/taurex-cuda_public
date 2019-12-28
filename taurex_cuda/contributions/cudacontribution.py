@@ -29,7 +29,7 @@ def _sum_kernal(nlayers, ngrid):
     mod = SourceModule(code)
     return mod.get_function('sum_sigma')
 
-@lru_cache(maxsize=20)
+@lru_cache(maxsize=30)
 def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_layer=0):
     extra = '+layer'
     if with_sigma_offset:
@@ -37,11 +37,6 @@ def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_la
 
 
     code = f"""
-    
-    #include <pycuda-helpers.hpp>
-   
-    texture<fp_tex_double, 1, cudaReadModeElementType> my_tex; 
-
     __global__ void contribute_tau(double* dest, const double* __restrict__ sigma, 
                                    const double* __restrict__ density, const double* __restrict__ path,
                                    const int* __restrict__ startK, const int* __restrict__ endK,
