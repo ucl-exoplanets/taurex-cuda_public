@@ -103,6 +103,8 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
         self._memory_pool = pytools.DeviceMemoryPool()
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
+
+        self._streams = [drv.Stream() for x in range(4)]
     def path_integral(self, wngrid, return_contrib):
 
         dz = np.gradient(self.altitudeProfile)
@@ -120,8 +122,9 @@ class TransmissionCudaModel(SimpleForwardModel):
         rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         for contrib in self.contribution_list:
             contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
-                                   density_profile, tau, path_length=self._path_length)
+                                   density_profile, tau, path_length=self._path_length,streams=self._streams)
         
+        drv.Context.synchronize()
         self.compute_absorption(rprs,tau, dz)
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
 

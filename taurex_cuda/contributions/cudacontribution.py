@@ -4,6 +4,7 @@ from functools import lru_cache
 import pycuda.autoinit
 from pycuda.compiler import SourceModule
 from pycuda.gpuarray import GPUArray, zeros
+import pycuda.driver as drv
 import numpy as np
 import math
 @lru_cache(maxsize=4)
@@ -28,9 +29,8 @@ def _sum_kernal(nlayers, ngrid):
     mod = SourceModule(code)
     return mod.get_function('sum_sigma')
 
-@lru_cache(maxsize=4)
-def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False):
-    
+@lru_cache(maxsize=20)
+def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_layer=0):
     extra = '+layer'
     if with_sigma_offset:
         extra = ''
@@ -38,17 +38,21 @@ def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False):
 
     code = f"""
     
+    #include <pycuda-helpers.hpp>
+   
+    texture<fp_tex_double, 1, cudaReadModeElementType> my_tex; 
+
     __global__ void contribute_tau(double* dest, const double* __restrict__ sigma, 
                                    const double* __restrict__ density, const double* __restrict__ path,
                                    const int* __restrict__ startK, const int* __restrict__ endK,
-                                   const int* __restrict__ density_offset)
+                                   const int* __restrict__ density_offset, const int total_layers)
     {{
         unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
         
         if ( i >= {grid_size} )
             return;
         
-        for (unsigned int layer=0; layer<={nlayers}; layer++)
+        for (unsigned int layer={start_layer}; layer<{nlayers}; layer++)
         {{
             unsigned int _startK = startK[layer];
             unsigned int _endK = endK[layer];
@@ -65,20 +69,31 @@ def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False):
     
     """
     mod = SourceModule(code)
-    return mod.get_function('contribute_tau')
+    func = mod.get_function('contribute_tau')
+    func.prepare('PPPPPPPi')
+    return func
 
-def cuda_contribute_tau(startK, endK, density_offset, sigma, density, path, nlayers, ngrid,tau=None, with_sigma_offset=False):
-    kernal = _contribute_tau_kernal(nlayers, ngrid, with_sigma_offset=with_sigma_offset)
+
+def cuda_contribute_tau(startK, endK, density_offset, sigma, density, path, 
+                        nlayers, ngrid, tau=None, with_sigma_offset=False, start_layer=0,total_layers=None,
+                        stream=None):
+
+    kernal = _contribute_tau_kernal(nlayers, ngrid, with_sigma_offset=with_sigma_offset, start_layer=start_layer)
     my_tau = tau
+    if total_layers is None:
+        total_layers = nlayers
     if my_tau is None:
         my_tau = GPUArray(shape=(nlayers,ngrid),dtype=np.float64)
     
+
+
     THREAD_PER_BLOCK_X = 256
     NUM_BLOCK_X = int(math.ceil(ngrid/THREAD_PER_BLOCK_X))
 
-    kernal(my_tau, sigma, density, path, startK, endK, density_offset, 
-           block=(THREAD_PER_BLOCK_X, 1, 1),
-           grid=(NUM_BLOCK_X, 1, 1))
+    kernal.prepared_call(
+        (NUM_BLOCK_X, 1, 1),
+        (THREAD_PER_BLOCK_X, 1, 1),
+        my_tau.gpudata, sigma.gpudata, density.gpudata, path.gpudata, startK.gpudata, endK.gpudata, density_offset.gpudata,np.int32(total_layers))
     if tau is None:
         return my_tau
 
@@ -91,7 +106,7 @@ class CudaContribution(Contribution):
         self._is_cuda_model = False
 
     def contribute(self, model, start_layer, end_layer,
-                   density_offset, layer, density, tau, path_length=None, with_sigma_offset=False):
+                   density_offset, layer, density, tau, path_length=None, with_sigma_offset=False, streams=None):
         """
         Computes an integral for a single layer for the optical depth.
 
@@ -124,9 +139,21 @@ class CudaContribution(Contribution):
         """
         self.debug(' %s %s %s %s %s %s %s', start_layer, end_layer,
                    density_offset, layer, density, tau, self._ngrid)
-        cuda_contribute_tau(start_layer, end_layer, density_offset,
-                            self.sigma_xsec, density, path_length,
-                            self._nlayers, self._ngrid, tau,with_sigma_offset)
+        
+        
+        if streams is None:
+            cuda_contribute_tau(start_layer, end_layer, density_offset,
+                                self.sigma_xsec, density, path_length,
+                                self._nlayers, self._ngrid, tau,with_sigma_offset)
+        else:
+            num_streams=len(streams)
+            split = self._nlayers//num_streams
+            stream_vals = [(x*split, (x+1)*split, streams[x]) for x in range(num_streams-1)] + [((num_streams-1)*split,self._nlayers,streams[-1])]
+
+            for start, end, stream in stream_vals:
+                cuda_contribute_tau(start_layer, end_layer, density_offset,
+                                    self.sigma_xsec, density, path_length,
+                                    end, self._ngrid, tau,with_sigma_offset,start_layer=start,total_layers=self._nlayers,stream=stream)           
         self.debug('DONE')
 
     def prepare(self, model, wngrid):

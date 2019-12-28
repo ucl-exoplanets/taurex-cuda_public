@@ -89,6 +89,8 @@ class EmissionCudaModel(SimpleForwardModel):
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
         self._memory_pool = pytools.DeviceMemoryPool()
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
+        self._streams = [drv.Stream() for x in range(4)]
+
     @lru_cache(maxsize=4)
     def _gen_ngauss_kernal(self, ngauss, nlayers, grid_size):
         from taurex.constants import PI
@@ -151,7 +153,6 @@ class EmissionCudaModel(SimpleForwardModel):
         return mod.get_function('quadrature_kernal')
 
     def path_integral(self, wngrid, return_contrib):
-
         dz = np.gradient(self.altitudeProfile)
         dz = np.array([dz for x in range(self.nLayers)])
         self._dz.set(dz)
@@ -171,10 +172,10 @@ class EmissionCudaModel(SimpleForwardModel):
 
         for contrib in self.contribution_list:
             contrib.contribute(self, self._start_layer, self._end_layer, self._density_offset, 0,
-                                density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True)
+                                density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True, streams=self._streams)
             contrib.contribute(self, self._start_dtau, self._end_dtau, self._density_offset, 0,
-                               density_profile, dtau, path_length=self._dz, with_sigma_offset=True)
-
+                               density_profile, dtau, path_length=self._dz, with_sigma_offset=True, streams=self._streams)
+        drv.Context.synchronize()
         integral_kernal = self._gen_ngauss_kernal(self._ngauss, self.nLayers, wngrid_size)
 
         THREAD_PER_BLOCK_X = 64
