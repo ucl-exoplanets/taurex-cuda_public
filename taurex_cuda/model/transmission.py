@@ -69,7 +69,7 @@ class TransmissionCudaModel(SimpleForwardModel):
                          atm_max_pressure)
 
         self.set_num_streams(num_streams)
-
+        self._memory_pool = pytools.DeviceMemoryPool()
     def compute_path_length(self, dz):
 
         
@@ -114,7 +114,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]).astype(np.int32))
         self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
-        self._memory_pool = pytools.DeviceMemoryPool()
+        
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
         
@@ -144,7 +144,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         
         for contrib in self._cuda_contribs:
             contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
-                                   density_profile, tau, path_length=self._path_length,streams=self._streams)
+                                   density_profile, tau, path_length=self._path_length)
         
         drv.Context.synchronize()
         final_tau = None

@@ -132,6 +132,9 @@ class CudaContribution(Contribution):
             integration length
 
         """
+
+        streams = None
+
         self.debug(' %s %s %s %s %s %s %s', start_layer, end_layer,
                    density_offset, layer, density, tau, self._ngrid)
         

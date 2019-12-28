@@ -61,10 +61,9 @@ def cuda_contribute_cia(startK, endK, density_offset, sigma, density, path, nlay
     THREAD_PER_BLOCK_X = 256
     NUM_BLOCK_X = int(math.ceil(ngrid/THREAD_PER_BLOCK_X))
 
-    kernal.prepared_async_call(        
+    kernal.prepared_call(        
         (NUM_BLOCK_X, 1, 1),
         (THREAD_PER_BLOCK_X, 1, 1),
-        stream,
         my_tau.gpudata, sigma.gpudata, density.gpudata, path.gpudata, startK.gpudata, endK.gpudata, density_offset.gpudata,np.int32(total_layers))
     if tau is None:
         return my_tau
@@ -117,6 +116,10 @@ class CIACuda(CudaContribution):
             integration length
 
         """
+
+        streams = None
+
+
         self.debug(' %s %s %s %s %s %s %s', start_layer, end_layer,
                    density_offset, layer, density, tau, self._ngrid)
         

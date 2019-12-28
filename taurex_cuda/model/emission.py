@@ -70,6 +70,7 @@ class EmissionCudaModel(SimpleForwardModel):
 
         self.set_num_gauss(ngauss)
         self.set_num_streams(1)
+        self._memory_pool = pytools.DeviceMemoryPool()
     def set_num_gauss(self, value):
         self._ngauss = int(value)
         mu, weight = np.polynomial.legendre.leggauss(self._ngauss*2)
@@ -91,7 +92,7 @@ class EmissionCudaModel(SimpleForwardModel):
 
         self._dz = zeros(shape=(self.nLayers,self.nLayers, ),dtype=np.float64)
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
-        self._memory_pool = pytools.DeviceMemoryPool()
+
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
     @lru_cache(maxsize=4)
@@ -182,9 +183,9 @@ class EmissionCudaModel(SimpleForwardModel):
 
         for contrib in self._cuda_contribs:
             contrib.contribute(self, self._start_layer, self._end_layer, self._density_offset, 0,
-                                density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True, streams=self._streams)
+                                density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True)
             contrib.contribute(self, self._start_dtau, self._end_dtau, self._density_offset, 0,
-                               density_profile, dtau, path_length=self._dz, with_sigma_offset=True, streams=self._streams)
+                               density_profile, dtau, path_length=self._dz, with_sigma_offset=True)
         drv.Context.synchronize()
         integral_kernal = self._gen_ngauss_kernal(self._ngauss, self.nLayers, wngrid_size)
 
