@@ -256,4 +256,4 @@ class EmissionCudaModel(SimpleForwardModel):
 
     @classmethod
     def input_keywords(cls):
-        return ['transmission_cuda', 'transit_cuda', ]
+        return ['emission_cuda', 'emission_cuda', ]
