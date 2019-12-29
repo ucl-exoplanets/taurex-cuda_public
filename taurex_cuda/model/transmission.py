@@ -112,7 +112,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         super().build()
         self._startK = to_gpu(np.array([0 for x in range(self.nLayers)]).astype(np.int32))
         self._endK = to_gpu(np.array([self.nLayers-x for x in range(self.nLayers)]).astype(np.int32))
-        self._density_offset = to_gpu(np.array(list(range(self.nLayers))))
+        self._density_offset = to_gpu(np.array(list(range(self.nLayers))).astype(np.int32))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
         
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
@@ -160,7 +160,7 @@ class TransmissionCudaModel(SimpleForwardModel):
             drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
             final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
             final_rprs, final_tau = self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,
-                                                          dz,final_tau)
+                                                            dz,final_tau)
 
         return final_rprs, final_tau
 
@@ -188,7 +188,7 @@ class TransmissionCudaModel(SimpleForwardModel):
                 integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
                 tau[layer*{ngrid} + i] = etau;
             }}
-            dest[i] = (pradius*pradius + integral)/(sradius*sradius);
+            dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
 
         }}
         """
