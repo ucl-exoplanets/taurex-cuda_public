@@ -157,7 +157,7 @@ class CudaOpacity(Logger):
         NUM_BLOCK_X = int(math.ceil(grid_length/THREAD_PER_BLOCK_X))
         NUM_BLOCK_Y = int(math.ceil(nlayers/THREAD_PER_BLOCK_Y))
         
-        compute_kernal(my_dest, self._gpu_grid,self._gpu_tgrid,self._gpu_pgrid, drv.In(temperature), drv.In(pressure),
+        compute_kernal(my_dest, self._gpu_grid,self._gpu_tgrid,self._gpu_pgrid, drv.In(temperature.ravel()), drv.In(pressure.ravel()),
                        drv.In(T_min), drv.In(T_max), drv.In(P_min), drv.In(P_max), drv.In(mix),
                       block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
         if dest is None:
