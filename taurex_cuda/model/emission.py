@@ -161,20 +161,29 @@ class EmissionCudaModel(SimpleForwardModel):
         from taurex.constants import PI
         mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
         mu_quads = mu[ngauss:]
-        wi_quads = weight[ngauss:]
 
         code = f"""
 
         __global__ void quadrature_kernal(double* __restrict__ dest, 
                                           double* __restrict__ layer_tau, 
                                           const double* __restrict__ dtau, 
-                                          const double* __restrict__ BB,
-                                          const double * __restrict__ mu)
+                                          const double* __restrict__ BB)
         {{
             unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
             
         if ( i >= {grid_size} )
             return;
+        """
+
+        for idx,mu in enumerate(mu_quads):
+            code+=f"""
+                
+                double I_{idx} = 0.0;
+
+            """
+
+        code+=f"""
+            
 
 
             for (int layer = 0; layer < {nlayers}; layer++)
@@ -185,21 +194,40 @@ class EmissionCudaModel(SimpleForwardModel):
                 double _BB = BB[layer*{grid_size} + i]*{1.0/PI};
                 layer_tau[layer*{grid_size} + i] = exp(-_layer_tau) - exp(-_dtau);
                 _dtau += _layer_tau;
-                
+
                 if (layer == 0){{
-                    for (int g =0; g < {ngauss}; g++){{
-                        double _mu = mu[g];
-                        dest[g*{grid_size}+i] += exp(-_dtau/_mu)*_BB;
-                    }}
-                }}
-            for (int g =0; g < {ngauss}; g++){{
-                    double _mu = mu[g];
-                    dest[g*{grid_size}+i] += (exp(-_layer_tau/_mu) - exp(-_dtau/_mu))*_BB;
-                }}
-            }}
+                
+        """
+        for idx,mu in enumerate(mu_quads):
+            code += f"""
 
+                I_{idx} += exp(-_dtau*{1.0/mu})*_BB;
+            """
+        code+=f"""
         }}
+        """
+        for idx,mu in enumerate(mu_quads):
+            code += f"""
 
+                I_{idx} += (exp(-_layer_tau*{1.0/mu}) - exp(-_dtau*{1.0/mu}))*_BB;
+            """
+        
+        
+        
+        code += f"""
+                }}
+
+            """
+        
+        for idx,mu in enumerate(mu_quads):
+            code +=f"""
+                dest[{idx*grid_size}+i] = I_{idx};
+            
+            """
+
+
+        code+=f"""
+        }}
         """
 
         mod = SourceModule(code)
@@ -280,8 +308,6 @@ class EmissionCudaModel(SimpleForwardModel):
         dtau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         BB = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         I = zeros(shape=(self._ngauss,wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
-        mu = to_gpu(self._mu_quads,allocator=self._memory_pool.allocate)
-        wi = to_gpu(self._wi_quads,allocator=self._memory_pool.allocate)
         cuda_blackbody(wngrid, temperature.ravel(), out=BB)
 
         if not self._fully_cuda:
@@ -300,7 +326,7 @@ class EmissionCudaModel(SimpleForwardModel):
         
         NUM_BLOCK_X = int(math.ceil(wngrid_size/THREAD_PER_BLOCK_X))
         
-        integral_kernal(I, layer_tau, dtau, BB,mu,
+        integral_kernal(I, layer_tau, dtau, BB,
                       block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
 
