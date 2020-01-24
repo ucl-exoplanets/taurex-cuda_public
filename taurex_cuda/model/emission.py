@@ -333,7 +333,7 @@ class EmissionCudaModel(SimpleForwardModel):
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
         final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
         #final_I= I.get()
-        return I.get(),1/self._mu_quads,self._wi_quads,final_tau
+        return I.get(),1/self._mu_quads[:,None],self._wi_quads[:,None],final_tau
         #return self.compute_final_flux(final_I), final_tau 
 
     def path_integral(self,wngrid,return_contrib):
@@ -341,7 +341,7 @@ class EmissionCudaModel(SimpleForwardModel):
         I,_mu,_w,tau = self.evaluate_emission(wngrid,return_contrib)
         self.debug('I: %s',I)
 
-        flux_total = 2.0*np.pi*sum(I*_w[:,None]/_mu[:,None])
+        flux_total = 2.0*np.pi*sum(I*_w/_mu)
         self.debug('flux_total %s',flux_total)
         
         return self.compute_final_flux(flux_total).ravel(),tau
