@@ -156,7 +156,112 @@ class EmissionCudaModel(SimpleForwardModel):
         mod = SourceModule(code)
         return mod.get_function('quadrature_kernal')
 
-    def path_integral(self, wngrid, return_contrib):
+    @lru_cache(maxsize=4)
+    def _gen_partial_kernal(self, ngauss, nlayers, grid_size):
+        from taurex.constants import PI
+        mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
+        mu_quads = mu[ngauss:]
+        wi_quads = weight[ngauss:]
+
+        code = f"""
+
+        __global__ void quadrature_kernal(double* __restrict__ dest, 
+                                          double* __restrict__ layer_tau, 
+                                          const double* __restrict__ dtau, 
+                                          const double* __restrict__ BB,
+                                          const double * __restrict__ mu)
+        {{
+            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+            
+        if ( i >= {grid_size} )
+            return;
+
+
+            for (int layer = 0; layer < {nlayers}; layer++)
+            {{
+
+                double _dtau = dtau[layer*{grid_size} + i];
+                double _layer_tau = layer_tau[layer*{grid_size} + i];
+                double _BB = BB[layer*{grid_size} + i]*{1.0/PI};
+                layer_tau[layer*{grid_size} + i] = exp(-_layer_tau) - exp(-_dtau);
+                _dtau += _layer_tau;
+                
+                if (layer == 0){{
+                    for (int g =0; g < {ngauss}; g++){{
+                        double _mu = mu[g];
+                        dest[g*{grid_size}+i] += exp(-_dtau/_mu)*_BB;
+                    }}
+                }}
+            for (int g =0; g < {ngauss}; g++){{
+                    double _mu = mu[g];
+                    dest[g*{grid_size}+i] += (exp(-_layer_tau/_mu) - exp(-_dtau/_mu))*_BB;
+                }}
+            }}
+
+        }}
+
+        """
+
+        mod = SourceModule(code)
+        return mod.get_function('quadrature_kernal')
+
+
+    @lru_cache(maxsize=4)
+    def _gen_coeff(self, ngauss, nlayers, grid_size):
+        from taurex.constants import PI
+        mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
+        mu_quads = mu[ngauss:]
+        wi_quads = weight[ngauss:]
+
+        code = f"""
+
+        __global__ void quadrature_kernal(double* __restrict__ dest, 
+                                          const double * __restrict__ mu,
+                                          const double * __restrict__ wi,
+                                          const double* __restrict__ tau)
+        {{
+            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+            
+        if ( i >= {grid_size} )
+            return;
+
+            double _I=0.0;
+            double _mu = 0.0;
+            double _wi = 0.0;
+            for (int g =0; g < {ngauss}; g++){{
+                _mu = mu[g];
+                _wi = wi[g];
+                _I += I[g*{grid_size}+i]*_mu*_wi;
+            }}
+
+            dest[i] = {2.0*PI}*_I;
+        }}
+        """
+
+        mod = SourceModule(code)
+        return mod.get_function('quadrature_kernal')
+
+
+
+    def partial_model(self,wngrid=None,cutoff_grid=True):
+        from taurex.util.util import clip_native_to_wngrid
+        self.initialize_profiles()
+
+        native_grid = self.nativeWavenumberGrid
+        if wngrid is not None and cutoff_grid:
+            native_grid = clip_native_to_wngrid(native_grid,wngrid)
+        self._star.initialize(native_grid)
+
+        for contrib in self.contribution_list:
+            
+            contrib.prepare(self,native_grid)
+            
+        return self.evaluate_emission(native_grid,False)
+
+
+
+
+    def evaluate_emission(self, wngrid, return_contrib):
         dz = np.gradient(self.altitudeProfile)
         dz = np.array([dz for x in range(self.nLayers)])
         self._dz.set(dz)
@@ -174,7 +279,9 @@ class EmissionCudaModel(SimpleForwardModel):
         layer_tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         dtau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         BB = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
-        I = zeros(shape=(wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
+        I = zeros(shape=(self._ngauss,wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
+        mu = to_gpu(self._mu_quads,allocator=self._memory_pool.allocate)
+        wi = to_gpu(self._wi_quads,allocator=self._memory_pool.allocate)
         cuda_blackbody(wngrid, temperature.ravel(), out=BB)
 
         if not self._fully_cuda:
@@ -187,23 +294,35 @@ class EmissionCudaModel(SimpleForwardModel):
             contrib.contribute(self, self._start_dtau, self._end_dtau, self._density_offset, 0,
                                density_profile, dtau, path_length=self._dz, with_sigma_offset=True)
         drv.Context.synchronize()
-        integral_kernal = self._gen_ngauss_kernal(self._ngauss, self.nLayers, wngrid_size)
+        integral_kernal = self._gen_partial_kernal(self._ngauss, self.nLayers, wngrid_size)
 
         THREAD_PER_BLOCK_X = 64
         
         NUM_BLOCK_X = int(math.ceil(wngrid_size/THREAD_PER_BLOCK_X))
         
-        integral_kernal(I, layer_tau, dtau, BB,
+        integral_kernal(I, layer_tau, dtau, BB,mu,
                       block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
 
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
         final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
-        final_I= I.get()
+        #final_I= I.get()
+        return I.get(),self._mu_quads,self._wi_quads,final_tau
+        #return self.compute_final_flux(final_I), final_tau 
 
-        return self.compute_final_flux(final_I), final_tau 
+    def path_integral(self,wngrid,return_contrib):
 
-    def fallback_noncuda(self, gpu_layer_tau, gpu_dtau, wngrid, total_layers):
+        I,_mu,_w,tau = self.evaluate_emission(wngrid,return_contrib)
+        self.debug('I: %s',I)
+
+        flux_total = 2.0*np.pi*sum(I*_w[:,None]*_mu[:,None])
+        self.debug('flux_total %s',flux_total)
+        
+        return self.compute_final_flux(flux_total).ravel(),tau
+
+
+
+    def fallback_noncuda(self, gpu_layer_tau, gpu_dtau,gpu_tau, wngrid, total_layers):
         from taurex.util.emission import black_body
         from taurex.constants import PI
 
@@ -215,6 +334,8 @@ class EmissionCudaModel(SimpleForwardModel):
         dtau = np.zeros(shape=(total_layers, wngrid_size))
         _dtau = np.zeros(shape=(1, wngrid_size))
         _layer_tau = np.zeros(shape=(1, wngrid_size))
+
+
         # Loop upwards
         for layer in range(total_layers):
             _layer_tau[...] = 0.0
