@@ -117,15 +117,13 @@ class TransmissionCudaModel(SimpleForwardModel):
         
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
-        
-
 
     def path_integral(self, wngrid, return_contrib):
 
         dz = np.gradient(self.altitudeProfile)
 
         wngrid_size = wngrid.shape[0]
-
+        self._ngrid = wngrid_size
         cpu_dl = self.compute_path_length(dz)
 
         density_profile = to_gpu(self.densityProfile,allocator=self._memory_pool.allocate)
@@ -139,28 +137,25 @@ class TransmissionCudaModel(SimpleForwardModel):
 
 
         tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
+        if not self._fully_cuda:
+            tau.set(self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,dz))
+
         rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
 
         
         for contrib in self._cuda_contribs:
             contrib.contribute(self, self._startK, self._endK, self._density_offset, 0,
                                    density_profile, tau, path_length=self._path_length)
-        
+
         drv.Context.synchronize()
         final_tau = None
         final_rprs = None
         
-        if self._fully_cuda:
-            self.compute_absorption(rprs,tau, dz)
-            drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
-            
-            final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
-            final_rprs = rprs.get()
-        else:
-            drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
-            final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
-            final_rprs, final_tau = self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,
-                                                            dz,final_tau)
+        self.compute_absorption(rprs,tau, dz)
+        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+        
+        final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+        final_rprs = rprs.get()
 
         return final_rprs, final_tau
 
@@ -196,7 +191,8 @@ class TransmissionCudaModel(SimpleForwardModel):
         return mod.get_function('compute_absorption')
 
     def fallback_noncuda(self, total_layers, path_length, density_profile,
-                         dz, tau):
+                         dz):
+        tau = np.zeros(shape=(total_layers, self._ngrid))
         for layer in range(total_layers):
 
             self.debug('Computing layer %s', layer)
@@ -208,18 +204,18 @@ class TransmissionCudaModel(SimpleForwardModel):
                 self.debug('Adding contribution from %s', contrib.name)
                 contrib.contribute(self, 0, endK, layer, layer,
                                    density_profile, tau, path_length=dl)
-        return self.compute_absorption_cpu(tau, dz)
+        return tau
 
-    def compute_absorption_cpu(self, tau, dz):
+    # def compute_absorption_cpu(self, tau, dz):
 
-        tau = np.exp(-tau)
-        ap = self.altitudeProfile[:, None]
-        pradius = self._planet.fullRadius
-        sradius = self._star.radius
-        _dz = dz[:, None]
+    #     tau = np.exp(-tau)
+    #     ap = self.altitudeProfile[:, None]
+    #     pradius = self._planet.fullRadius
+    #     sradius = self._star.radius
+    #     _dz = dz[:, None]
 
-        integral = np.sum((pradius+ap)*(1.0-tau)*_dz*2.0, axis=0)
-        return ((pradius**2.0) + integral)/(sradius**2), tau
+    #     integral = np.sum((pradius+ap)*(1.0-tau)*_dz*2.0, axis=0)
+    #     return ((pradius**2.0) + integral)/(sradius**2), tau
 
     def compute_absorption(self, rprs, tau, dz):
 
