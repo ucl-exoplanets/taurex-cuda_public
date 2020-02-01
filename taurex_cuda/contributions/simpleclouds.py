@@ -43,6 +43,52 @@ class SimpleCloudsCuda(CudaContribution):
     def build(self, model):
         super().build(model)
 
+
+    def contribute(self, model, start_layer, end_layer,
+                   density_offset, layer, density, tau, path_length=None, with_sigma_offset=False, streams=None):
+        """
+        Computes an integral for a single layer for the optical depth.
+
+        Parameters
+        ----------
+        model: :class:`~taurex.model.model.ForwardModel`
+            A forward model
+
+        start_layer: int
+            Lowest layer limit for integration
+
+        end_layer: int
+            Upper layer limit of integration
+
+        density_offset: int
+            offset in density layer
+
+        layer: int
+            atmospheric layer being computed
+
+        density: :obj:`array`
+            density profile of atmosphere
+
+        tau: :obj:`array`
+            optical depth to store result
+
+        path_length: :obj:`array`
+            integration length
+
+        """
+
+        THREAD_PER_BLOCK_X = 16
+        THREAD_PER_BLOCK_Y = 16
+        
+        NUM_BLOCK_X = int(math.ceil(self._ngrid/THREAD_PER_BLOCK_X))
+        NUM_BLOCK_Y = int(math.ceil(model.nLayers/THREAD_PER_BLOCK_Y))
+
+        cloud_kernel = _cloud_kernal(self._ngrid)
+
+        cloud_kernel(tau,np.int32(self._end_layer),
+            block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
+
+
     def prepare_each(self, model, wngrid):
         """
         Prepares each molecular opacity by weighting them
@@ -66,22 +112,14 @@ class SimpleCloudsCuda(CudaContribution):
         self.debug('Preparing model with %s', wngrid.shape)
         self._ngrid = wngrid.shape[0]
 
-        self._sigma_xsec = zeros(shape=(model.nLayers, wngrid.shape[0]), dtype=np.float64, allocator=self._memory_pool.allocate)
-
         end_layer = max(0,np.argmax(model.pressureProfile < self._cloud_pressure))
-        cloud_kernel = _cloud_kernal(self._ngrid)
+        self._end_layer = end_layer
 
-        THREAD_PER_BLOCK_X = 16
-        THREAD_PER_BLOCK_Y = 16
-        
-        NUM_BLOCK_X = int(math.ceil(self._ngrid/THREAD_PER_BLOCK_X))
-        NUM_BLOCK_Y = int(math.ceil(model.nLayers/THREAD_PER_BLOCK_Y))
 
-        cloud_kernel(self._sigma_xsec,np.int32(end_layer),
-            block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
+        yield 'Clouds', None
 
-        yield 'Clouds', self._sigma_xsec
-
+    def prepare(self, model, wngrid):
+        next(self.prepare_each(model, wngrid))
 
     @fitparam(param_name='clouds_pressure',
               param_latex='$P_\mathrm{clouds}$',
