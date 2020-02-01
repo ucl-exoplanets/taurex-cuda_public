@@ -12,6 +12,8 @@ import math
 import pycuda.tools as pytools
 from taurex_cuda.contributions.cudacontribution import CudaContribution
 
+
+
 class TransmissionCudaModelTwo(ForwardModel):
 
 
@@ -95,14 +97,14 @@ class TransmissionCudaModelTwo(ForwardModel):
         self._density_offset_one = to_gpu(np.array(list(range(m1.nLayers))).astype(np.int32))
         self._path_length_one = to_gpu(np.zeros(shape=(m1.nLayers, m1.nLayers)))
         
-        self._tau_buffer_one = drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], m1.nLayers,),dtype=np.float64)
+        self._tau_buffer = drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1]*(m1.nLayers + m2.nLayers)),dtype=np.float64)
 
         self._startK_two = to_gpu(np.array([0 for x in range(m2.nLayers)]).astype(np.int32))
         self._endK_two = to_gpu(np.array([m2.nLayers-x for x in range(m2.nLayers)]).astype(np.int32))
         self._density_offset_two = to_gpu(np.array(list(range(m2.nLayers))).astype(np.int32))
         self._path_length_two = to_gpu(np.zeros(shape=(m2.nLayers, m2.nLayers)))
         
-        self._tau_buffer_two = drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], m2.nLayers,),dtype=np.float64)
+        #self._tau_buffer_two = drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], m2.nLayers,),dtype=np.float64)
 
 
 
@@ -165,9 +167,9 @@ class TransmissionCudaModelTwo(ForwardModel):
 
 
         # Compute path integral
-        absorp, tau_one, tau_two = self.path_integral(native_grid, False)
+        absorp, tau_one = self.path_integral(native_grid, False)
 
-        return native_grid, absorp, tau_one, tau_two
+        return native_grid, absorp, tau_one,
 
     def compute_path_length(self, dz, ap, layers, gpu_path):
 
@@ -223,7 +225,7 @@ class TransmissionCudaModelTwo(ForwardModel):
         dz_two = np.gradient(self._model_two.altitudeProfile)
 
         wngrid_size = wngrid.shape[0]
-        
+        self._ngrid = wngrid_size
         m1 = self._model_one
         m2 = self._model_two
 
@@ -283,91 +285,155 @@ class TransmissionCudaModelTwo(ForwardModel):
             contrib.contribute(self, self._startK_two, self._endK_two, self._density_offset_two, 0,
                                    density_profile_two, tau_two, path_length=self._path_length_two)
 
+        #drv.memcpy_dtoh(self._tau_buffer_one[:wngrid_size,:], tau_one.gpudata)
+        #drv.memcpy_dtoh(self._tau_buffer_two[:wngrid_size,:], tau_two.gpudata)
+
+        #t1 = self._tau_buffer_one[:wngrid_size,:].reshape(m1.nLayers,wngrid_size)
+        #t2 = self._tau_buffer_two[:wngrid_size,:].reshape(m2.nLayers,wngrid_size)
         #self.debug('tau one %s %s', tau_one, tau_one.shape)
         #self.debug('tau two %s %s', tau_two, tau_two.shape)
-        absorption, tau_one, tau_two = self.compute_absorption(tau_one.get(), dz_one, ap_one, tau_two.get(), dz_two, ap_two)
+        absorption, tau_one = self.compute_absorption(tau_one, dz_one, ap_one, tau_two, dz_two, ap_two)
 
-        return absorption, tau_one, tau_two
+        return absorption, tau_one
 
+
+    def compile_altitude(self, altitude, new_altitude):
+        
+        lenA = len(altitude)
+        a_min = np.digitize(new_altitude, altitude).astype(np.int32)-1
+        np.clip(a_min, 0, lenA-1,out=a_min)
+        a_max = a_min+1
+        np.clip(a_max, 0, lenA-1,out=a_max)
+
+        return a_min, a_max
+
+    @lru_cache(maxsize=4)
+    def kernal_func(self,grid_length):
+
+        code = f"""
+        
+        __global__ void interp_tau(double* dest, const double* __restrict__ tau,const double* __restrict__ agrid, 
+                                          const double* __restrict__ ap, const int * __restrict__ amin, 
+                                          const int * __restrict__ amax, const int nlayers)
+        {{
+            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+            unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+            
+            if ( i >= {grid_length} )
+                return;
+            
+            if ( j >= nlayers )
+                return;
+            
+            
+            int amin_idx = amin[j];
+            int amax_idx = amax[j];
+            double amin_val = agrid[amin_idx];
+            double amax_val = agrid[amax_idx];
+            double a = ap[j];
+            double _x11 = tau[amin_idx*{grid_length} + i];
+            double _x12 = tau[amax_idx*{grid_length} + i];
+            double diff = (amax_val - amin_val);
+            if (diff == 0.0)
+            {{
+                dest[j*{grid_length} + i] = _x12;
+            }}else{{
+                dest[j*{grid_length} + i] += (_x11 * (amax_val - amin_val) - (a - amin_val)*(_x11-_x12) )/diff;
+            }}
+
+        }}                    
+        
+        
+        """
+        
+        self._module = SourceModule(code)
+        interp_kernal = self._module.get_function("interp_tau")
+        
+        return interp_kernal
+
+
+    @lru_cache(maxsize=4)
+    def _absorption_kernal(self, ngrid):
+
+        code = f"""
+
+        __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
+                                           const double* __restrict__ dz, 
+                                           const double* __restrict__ altitude, const int nlayers,
+                                           const double pradius, const double sradius)
+        {{
+            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+            if (i >= {ngrid})
+                return;
+
+            double integral = 0.0;
+            for (int layer=0; layer < nlayers; layer++)
+            {{
+                double etau = exp(-tau[layer*{ngrid} + i]);
+                double _dz = dz[layer];
+                double ap = altitude[layer];
+                integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
+                tau[layer*{ngrid} + i] = etau;
+            }}
+            dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
+
+        }}
+        """
+        mod = SourceModule(code)
+        return mod.get_function('compute_absorption')
 
     def compute_absorption(self, tau_one, dz_one, ap_one,  tau_two, dz_two, ap_two):
         pradius = self._planet.fullRadius
         sradius = self._star.radius
 
+        interp_kernel = self.kernal_func(self._ngrid)
 
-
-
-        #integral = self.compute_integral(tau, dz)
-        # _dz_one = dz_one[:, None]
-        # _ap_one = ap_one[:, None]
-        # _dz_two = dz_two[:, None]
-        # _ap_two = ap_two[:, None]
-
-        # _ap_one_mapped = _ap_two
-        # _dz_one_mapped = _dz_two
-
-        # ### build tau at the model 2 altitude grid.
-        # from scipy.interpolate import interp1d
-        # f = interp1d(_ap_one, tau_one, axis=0)
-        # tau_one_mapped = f(_ap_one_mapped)
-
-        # _ap_one_mapped.append(_ap_one[_ap_one[:] > np.max(_ap_one_mapped)])
-        # _dz_one_mapped.append(_dz_one[_ap_one[:] > np.max(_ap_one_mapped)])
-        # tau_one_mapped.append(tau_one[_ap_one[:] > np.max(_ap_one_mapped),:])
-
-        # supp = np.zeros(len(_ap_one_mapped)-len(_ap_two))
-        # tau_two_mapped = tau_two
-        # tau_one_mapped.append(supp)
-
-        ###### we need a mapping for dz and ap here!!!
-        ###### this assumes the structure is the same
-
-        self.debug('Alt profile [0] %s', ap_one)
-        self.debug('Alt profile [1] %s', ap_two)
-        self.debug('Alt profile shape [0] %s', ap_one.shape)
-        self.debug('Alt profile shape [1] %s', ap_two.shape)
-        self.debug('tau shape [0] %s', tau_one.shape)
-        self.debug('tau shape [1] %s', tau_two.shape)
-        # integral = np.sum((pradius + ap_) * (1.0 - tau_one) * dz_one, axis=0)
-        f1 = interp1d(ap_one,tau_one, copy=False,
-                                    bounds_error=False,fill_value=0.0, axis=0,assume_sorted=True)
-
-        self.debug('F1 done')
-        f2 = interp1d(ap_two,tau_two, copy=False,
-                                bounds_error=False,fill_value=0.0, axis=0,assume_sorted=True)
-
-        self.debug('F2 done')
-
-        self.debug('Alt profile [0] %s', ap_one)
-        self.debug('Alt profile [1] %s', ap_two)
-        new_alt =np.sort(np.unique(np.concatenate([ap_one, ap_two])))
-        self.info('Number of altitude layers %s',new_alt.shape)
-        self.debug('Altitude layers %s',new_alt)
-        
-        new_tau1 = f1(new_alt)
-        self.info('New tau one %s',new_tau1)
-        self.info('New tau one shape %s',new_tau1.shape)
-        new_tau2 = f2(new_alt)
-        self.info('New tau two %s', new_tau2)
-        self.info('New tau two shape %s', new_tau2.shape)
-
-        tau_one = np.exp(-new_tau1)
-        tau_two = np.exp(-new_tau2)
-
-        self.debug('tau [0] %s', tau_one)
-        self.debug('tau shape [0] %s', tau_one.shape)
-        self.debug('tau [1] %s', tau_two)
-        self.debug('tau shape [1] %s', tau_two.shape)
-        # tau_one = np.exp(-tau_one)
-        # tau_two = np.exp(-tau_two)
+        new_alt = np.sort(np.unique(np.concatenate([ap_one, ap_two])))
+        new_alt_gpu = to_gpu(new_alt, self._memory_pool.allocate)
+        num_new_alt = new_alt.shape[0]
         new_dz = np.gradient(new_alt)
-        self.debug('new dz %s', new_dz)
-        self.debug('new dz shape %s', new_dz.shape)
-        #integral = np.sum((pradius + new_alt[:,None]) * (2.0 - tau_one) * new_dz[:,None]*2,axis=0)
 
-        integral = np.sum((pradius + new_alt[:,None]) * (1.0 - tau_one*tau_two) * new_dz[:,None]*2.0,axis=0)
-        # self.info('integral = %s',integral)
-        # integral += np.sum((pradius + ap_two[:,None]) * (1.0 - tau_two) * dz_two[:,None],axis=0)
-        # integral = np.sum((pradius + _ap_one_mapped) * (1.0 - tau_one) * _dz_one_mapped + (pradius + _ap_one_mapped) * (1.0 - tau_two) * _dz_one_mapped, axis=0)
+        THREAD_PER_BLOCK_X = 16
+        THREAD_PER_BLOCK_Y = 16
+        
+        NUM_BLOCK_X = int(math.ceil(self._ngrid/THREAD_PER_BLOCK_X))
+        NUM_BLOCK_Y = int(math.ceil(num_new_alt/THREAD_PER_BLOCK_Y))
 
-        return ((pradius**2.0) + integral)/(sradius**2), tau_one, tau_two
+        rprs = zeros(shape=(self._ngrid), dtype=np.float64,allocator=self._memory_pool.allocate)
+        new_tau = zeros(shape=(num_new_alt, self._ngrid), 
+                        dtype=np.float64, allocator=self._memory_pool.allocate)
+
+
+        ap = to_gpu(ap_one,allocator=self._memory_pool.allocate)
+        apmin, apmax = self.compile_altitude(ap_one, new_alt)
+        self.info('apmin %s', apmin)
+        self.info('apmax %s', apmax)
+        
+        interp_kernel(new_tau, tau_one,ap,new_alt_gpu,
+                       drv.In(apmin), drv.In(apmax), np.int32(num_new_alt),
+                      block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
+
+        ap = to_gpu(ap_two,allocator=self._memory_pool.allocate) 
+        apmin, apmax = self.compile_altitude(ap_two, new_alt)
+        interp_kernel(new_tau, tau_two,ap,new_alt_gpu,
+                       drv.In(apmin), drv.In(apmax), np.int32(num_new_alt),
+                      block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
+
+        grid_size = self._ngrid
+        rprs_kernal = self._absorption_kernal( grid_size)
+
+        THREAD_PER_BLOCK_X = 256
+        NUM_BLOCK_X = int(math.ceil(grid_size/THREAD_PER_BLOCK_X))
+
+        rprs_kernal(rprs, new_tau, drv.In(new_dz), new_alt_gpu, np.int32(num_new_alt),
+                    np.float64(self._planet.fullRadius),
+                    np.float64(self._star.radius),
+                    block=(THREAD_PER_BLOCK_X, 1, 1),
+                    grid=(NUM_BLOCK_X, 1, 1))
+
+        drv.memcpy_dtoh(self._tau_buffer[:self._ngrid*num_new_alt], new_tau.gpudata)
+        
+        final_tau = self._tau_buffer[:self._ngrid*num_new_alt].reshape(num_new_alt,self._ngrid)
+
+        return rprs.get(), final_tau#((pradius**2.0) + integral)/(sradius**2), tau_one
