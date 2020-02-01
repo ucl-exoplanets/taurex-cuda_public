@@ -8,6 +8,8 @@ from functools import lru_cache
 import math
 from taurex.core import fitparam
 
+
+@lru_cache(maxsize=4)
 def _cloud_kernal(grid_size):
 
     code = f"""
