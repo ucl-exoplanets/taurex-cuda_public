@@ -140,7 +140,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         if not self._fully_cuda:
             tau.set(self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,dz))
 
-        rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
+
 
         
         for contrib in self._cuda_contribs:
@@ -148,9 +148,10 @@ class TransmissionCudaModel(SimpleForwardModel):
                                    density_profile, tau, path_length=self._path_length)
 
         drv.Context.synchronize()
+
         final_tau = None
         final_rprs = None
-        
+        rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         self.compute_absorption(rprs,tau, dz)
         drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
         
