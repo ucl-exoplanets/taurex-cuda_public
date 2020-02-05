@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 import setuptools
 from setuptools import find_packages
-from numpy.distutils.core import setup
-from numpy.distutils.core import Extension
-from numpy.distutils import log
+from distutils.core import setup
+from distutils.core import Extension
+from distutils import log
 import re, os
 
 packages = find_packages(exclude=('tests', 'doc'))
