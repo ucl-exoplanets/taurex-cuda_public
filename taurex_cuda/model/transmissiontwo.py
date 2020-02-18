@@ -435,8 +435,8 @@ class TransmissionCudaModelTwo(ForwardModel):
                     block=(THREAD_PER_BLOCK_X, 1, 1),
                     grid=(NUM_BLOCK_X, 1, 1))
 
-        drv.memcpy_dtoh(self._tau_buffer[:self._ngrid*num_new_alt], new_tau.gpudata)
+        #drv.memcpy_dtoh(self._tau_buffer[:self._ngrid*num_new_alt], new_tau.gpudata)
         
-        final_tau = self._tau_buffer[:self._ngrid*num_new_alt].reshape(num_new_alt,self._ngrid)
+        final_tau =new_tau.get() #self._tau_buffer[:self._ngrid*num_new_alt].reshape(num_new_alt,self._ngrid)
 
         return rprs.get(), final_tau#((pradius**2.0) + integral)/(sradius**2), tau_one
