@@ -21,10 +21,10 @@ def __rayleigh_kernal(molecule_computation_code):
         unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
         unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
 
-        if (i > grid_size)
+        if (i >= grid_size)
             return;
         
-        if (j > nlayers)
+        if (j >= nlayers)
             return;
 
         double _wn = wngrid[i];
