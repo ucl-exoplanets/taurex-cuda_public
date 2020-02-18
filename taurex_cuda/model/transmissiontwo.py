@@ -271,6 +271,8 @@ class TransmissionCudaModelTwo(ForwardModel):
             contrib.contribute(self, self._startK_one, self._endK_one, self._density_offset_one, 0,
                                    density_profile_one, tau_one, path_length=self._path_length_one)
 
+        drv.Context.synchronize()
+
         tau_two = zeros(shape=(total_layers_two, wngrid_size), dtype=np.float64)
         cuda_contribs_two = [c for c in m1.contribution_list if isinstance(c, CudaContribution)]
         noncuda_contribs_two = [c for c in m1.contribution_list if not isinstance(c, CudaContribution)]
@@ -285,6 +287,7 @@ class TransmissionCudaModelTwo(ForwardModel):
             contrib.contribute(self, self._startK_two, self._endK_two, self._density_offset_two, 0,
                                    density_profile_two, tau_two, path_length=self._path_length_two)
 
+        drv.Context.synchronize()
         #drv.memcpy_dtoh(self._tau_buffer_one[:wngrid_size,:], tau_one.gpudata)
         #drv.memcpy_dtoh(self._tau_buffer_two[:wngrid_size,:], tau_two.gpudata)
 
