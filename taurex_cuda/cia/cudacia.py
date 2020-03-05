@@ -118,7 +118,8 @@ class CudaCIA(Logger):
             double mix = mix_ratio[j];
             double _x11 = xsec_grid[Tmin_idx*{self._strides[0]//8} + i + {min_idx}];
             double _x12 = xsec_grid[Tmax_idx*{self._strides[0]//8} + i + {min_idx}];
-            dest[j*{grid_length} + i] = (_x11 * (Tmax_val - Tmin_val) - (T - Tmin_val)*(_x11-_x12) )*mix/(Tmax_val - Tmin_val);
+            double diff = (Tmax_val - Tmin_val+1.0);
+            dest[j*{grid_length} + i] = (_x11 * diff - (T - Tmin_val)*(_x11-_x12) )*mix/diff;
         }}                    
         
         
