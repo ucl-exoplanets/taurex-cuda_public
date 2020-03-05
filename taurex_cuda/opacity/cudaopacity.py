@@ -23,6 +23,7 @@ class CudaOpacity(Logger):
         self._gpu_pgrid = to_gpu(self._xsec.pressureGrid)
         self._memory_pool = drv.DeviceMemoryPool()
         self.transfer_xsec_grid(wngrid)
+
     def transfer_xsec_grid(self, wngrid):
 
         self._wngrid = self._xsec.wavenumberGrid
@@ -140,7 +141,10 @@ class CudaOpacity(Logger):
     
     
     def opacity(self, temperature, pressure, mix, wngrid=None, dest=None):
-
+        minmaxT = self._xsec.temperatureGrid.min(),self._xsec.temperatureGrid.max()
+        minmaxP = self._xsec.pressureGrid.min(),self._xsec.pressureGrid.max()
+        temperature = np.clip(temperature,*minmaxT)
+        pressure = np.clip(pressure,*minmaxP)
         T_min, T_max, P_min, P_max, mix = \
             self.compile_temperature_pressure_mix(temperature, pressure, mix)
         
