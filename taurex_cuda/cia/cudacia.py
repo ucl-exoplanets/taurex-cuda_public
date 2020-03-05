@@ -55,7 +55,7 @@ class CudaCIA(Logger):
         return np.array(T_min,dtype=np.int32),np.array(T_max,dtype=np.int32), np.array(M,dtype=np.float64)
 
     def opacity(self, temperature, mix, wngrid=None, dest=None):
-
+        temperature = np.clip(temperature,self._xsec.temperatureGrid.min(),self._xsec.temperatureGrid.max())
         T_min, T_max, mix = \
             self.compile_temperature_mix(temperature,mix)
         
