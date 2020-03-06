@@ -93,7 +93,7 @@ class CudaOpacity(Logger):
 
 
             if (pdiff == 0.0 && tdiff == 0.0){{
-                dest[j*{grid_length} + i] = 0.0;
+                dest[j*{grid_length} + i] = _x22*mix/10000.0;
             }}else if (pdiff == 0.0){{
                 dest[j*{grid_length} + i] = (_x11 * tdiff - (T - Tmin_val)*(_x11-_x12) )*mix/tdiff/10000.0;
             }}else if (tdiff == 0.0){{
