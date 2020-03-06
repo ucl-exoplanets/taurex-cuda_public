@@ -83,14 +83,27 @@ class CudaOpacity(Logger):
             double Pmax_val = pgrid[Pmax_idx];
             double T = temperature[j];
             double P = pressure[j];
-            double mix = mix_ratio[j];
+            double mix = mix_ratio[j];            
             double _x11 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
             double _x12 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
             double _x21 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
             double _x22 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
-            dest[j*{grid_length} + i] =((_x11*(Pmax_val - Pmin_val)*(Tmax_val - Tmin_val) - (P - Pmin_val)*(Tmax_val - Tmin_val)*(_x11 - _x21) - (T - Tmin_val)*(-(P - Pmin_val)*(_x11 - _x21) + 
-                                        (P - Pmin_val)*(_x12 - _x22) + (Pmax_val - Pmin_val)*(_x11 - _x12)))/
-                                        ((Pmax_val - Pmin_val)*(Tmax_val - Tmin_val)))*mix/10000.0;
+            double tdiff = Tmax_val - Tmin_val;
+            double pdiff = Pmax_val - Pmin_val;
+
+
+            if (pdiff == 0.0 && tdiff == 0.0){{
+                dest[j*{grid_length} + i] = 0.0;
+            }}else if (pdiff == 0.0){{
+                dest[j*{grid_length} + i] = (_x11 * tdiff - (T - Tmin_val)*(_x11-_x12) )*mix/tdiff/10000.0;
+            }}else if (tdiff == 0.0){{
+                dest[j*{grid_length} + i] = (_x11 * pdiff - (P - Pmin_val)*(_x11-_x21) )*mix/pdiff/10000.0;
+            }}else{{
+
+                dest[j*{grid_length} + i] =((_x11*pdiff*tdiff - (P - Pmin_val)*tdiff*(_x11 - _x21) - (T - Tmin_val)*(-(P - Pmin_val)*(_x11 - _x21) + 
+                                            (P - Pmin_val)*(_x12 - _x22) + pdiff*(_x11 - _x12)))/
+                                            (pdiff*tdiff))*mix/10000.0;
+            }}
         }}                    
         
         
