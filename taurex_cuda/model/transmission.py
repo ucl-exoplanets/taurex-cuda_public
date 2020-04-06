@@ -10,6 +10,37 @@ import pycuda.tools as pytools
 from taurex_cuda.contributions.cudacontribution import CudaContribution
 
 
+@lru_cache(maxsize=400)
+def absorption_kernal(nlayers, ngrid):
+
+    code = f"""
+
+    __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
+                                        const double* __restrict__ dz, 
+                                        const double* __restrict__ altitude,
+                                        const double pradius, const double sradius)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+        if (i >= {ngrid})
+            return;
+
+        double integral = 0.0;
+        for (int layer=0; layer < {nlayers}; layer++)
+        {{
+            double etau = exp(-tau[layer*{ngrid} + i]);
+            double _dz = dz[layer];
+            double ap = altitude[layer];
+            integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
+            tau[layer*{ngrid} + i] = etau;
+        }}
+        dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
+
+    }}
+    """
+    mod = SourceModule(code)
+    return mod.get_function('compute_absorption')
+
 class TransmissionCudaModel(SimpleForwardModel):
     """
 
@@ -160,36 +191,6 @@ class TransmissionCudaModel(SimpleForwardModel):
 
         return final_rprs, final_tau
 
-    @lru_cache(maxsize=4)
-    def _absorption_kernal(self, nlayers, ngrid):
-
-        code = f"""
-
-        __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
-                                           const double* __restrict__ dz, 
-                                           const double* __restrict__ altitude,
-                                           const double pradius, const double sradius)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-
-            if (i >= {ngrid})
-                return;
-
-            double integral = 0.0;
-            for (int layer=0; layer < {nlayers}; layer++)
-            {{
-                double etau = exp(-tau[layer*{ngrid} + i]);
-                double _dz = dz[layer];
-                double ap = altitude[layer];
-                integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
-                tau[layer*{ngrid} + i] = etau;
-            }}
-            dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
-
-        }}
-        """
-        mod = SourceModule(code)
-        return mod.get_function('compute_absorption')
 
     def fallback_noncuda(self, total_layers, path_length, density_profile,
                          dz):
@@ -221,7 +222,7 @@ class TransmissionCudaModel(SimpleForwardModel):
     def compute_absorption(self, rprs, tau, dz):
 
         grid_size = tau.shape[-1]
-        rprs_kernal = self._absorption_kernal(self.nLayers, grid_size)
+        rprs_kernal = absorption_kernal(self.nLayers, grid_size)
 
         THREAD_PER_BLOCK_X = 256
         NUM_BLOCK_X = int(math.ceil(grid_size/THREAD_PER_BLOCK_X))

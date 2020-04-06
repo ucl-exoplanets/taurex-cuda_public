@@ -37,7 +37,7 @@ def __rayleigh_kernal(molecule_computation_code):
 
     """
     return code
-@lru_cache(maxsize=-1)
+@lru_cache(maxsize=None)
 def get_rayleigh_kernal(molecule):
     from ..utils.scattering import _molecule_func_code
     try:

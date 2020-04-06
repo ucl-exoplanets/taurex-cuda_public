@@ -13,6 +13,82 @@ import pycuda.tools as pytools
 from taurex_cuda.contributions.cudacontribution import CudaContribution
 
 
+@lru_cache(maxsize=400)
+def kernal_func(grid_length):
+
+    code = f"""
+    
+    __global__ void interp_tau(double* dest, const double* __restrict__ tau,const double* __restrict__ agrid, 
+                                        const double* __restrict__ ap, const int * __restrict__ amin, 
+                                        const int * __restrict__ amax, const int nlayers)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+        
+        if ( i >= {grid_length} )
+            return;
+        
+        if ( j >= nlayers )
+            return;
+        
+        
+        int amin_idx = amin[j];
+        int amax_idx = amax[j];
+        double amin_val = agrid[amin_idx];
+        double amax_val = agrid[amax_idx];
+        double a = ap[j];
+        double _x11 = tau[amin_idx*{grid_length} + i];
+        double _x12 = tau[amax_idx*{grid_length} + i];
+        double diff = (amax_val - amin_val);
+        if (diff == 0.0)
+        {{
+            dest[j*{grid_length} + i] = _x12;
+        }}else{{
+            dest[j*{grid_length} + i] += (_x11 * (amax_val - amin_val) - (a - amin_val)*(_x11-_x12) )/diff;
+        }}
+
+    }}                    
+    
+    
+    """
+    
+    self._module = SourceModule(code)
+    interp_kernal = self._module.get_function("interp_tau")
+    
+    return interp_kernal
+
+
+@lru_cache(maxsize=400)
+def absorption_kernal(ngrid):
+
+    code = f"""
+
+    __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
+                                        const double* __restrict__ dz, 
+                                        const double* __restrict__ altitude, const int nlayers,
+                                        const double pradius, const double sradius)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+
+        if (i >= {ngrid})
+            return;
+
+        double integral = 0.0;
+        for (int layer=0; layer < nlayers; layer++)
+        {{
+            double etau = exp(-tau[layer*{ngrid} + i]);
+            double _dz = dz[layer];
+            double ap = altitude[layer];
+            integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
+            tau[layer*{ngrid} + i] = etau;
+        }}
+        dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
+
+    }}
+    """
+    mod = SourceModule(code)
+    return mod.get_function('compute_absorption')
+
 
 class TransmissionCudaModelTwo(ForwardModel):
 
@@ -310,87 +386,13 @@ class TransmissionCudaModelTwo(ForwardModel):
 
         return a_min, a_max
 
-    @lru_cache(maxsize=4)
-    def kernal_func(self,grid_length):
 
-        code = f"""
-        
-        __global__ void interp_tau(double* dest, const double* __restrict__ tau,const double* __restrict__ agrid, 
-                                          const double* __restrict__ ap, const int * __restrict__ amin, 
-                                          const int * __restrict__ amax, const int nlayers)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-            unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-            
-            if ( i >= {grid_length} )
-                return;
-            
-            if ( j >= nlayers )
-                return;
-            
-            
-            int amin_idx = amin[j];
-            int amax_idx = amax[j];
-            double amin_val = agrid[amin_idx];
-            double amax_val = agrid[amax_idx];
-            double a = ap[j];
-            double _x11 = tau[amin_idx*{grid_length} + i];
-            double _x12 = tau[amax_idx*{grid_length} + i];
-            double diff = (amax_val - amin_val);
-            if (diff == 0.0)
-            {{
-                dest[j*{grid_length} + i] = _x12;
-            }}else{{
-                dest[j*{grid_length} + i] += (_x11 * (amax_val - amin_val) - (a - amin_val)*(_x11-_x12) )/diff;
-            }}
-
-        }}                    
-        
-        
-        """
-        
-        self._module = SourceModule(code)
-        interp_kernal = self._module.get_function("interp_tau")
-        
-        return interp_kernal
-
-
-    @lru_cache(maxsize=4)
-    def _absorption_kernal(self, ngrid):
-
-        code = f"""
-
-        __global__ void compute_absorption(double* __restrict__ dest, double* __restrict__ tau,
-                                           const double* __restrict__ dz, 
-                                           const double* __restrict__ altitude, const int nlayers,
-                                           const double pradius, const double sradius)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-
-            if (i >= {ngrid})
-                return;
-
-            double integral = 0.0;
-            for (int layer=0; layer < nlayers; layer++)
-            {{
-                double etau = exp(-tau[layer*{ngrid} + i]);
-                double _dz = dz[layer];
-                double ap = altitude[layer];
-                integral += (pradius+ap)*(1.0-etau)*_dz*2.0;
-                tau[layer*{ngrid} + i] = etau;
-            }}
-            dest[i] = ((pradius*pradius) + integral)/(sradius*sradius);
-
-        }}
-        """
-        mod = SourceModule(code)
-        return mod.get_function('compute_absorption')
 
     def compute_absorption(self, tau_one, dz_one, ap_one,  tau_two, dz_two, ap_two):
         pradius = self._planet.fullRadius
         sradius = self._star.radius
 
-        interp_kernel = self.kernal_func(self._ngrid)
+        interp_kernel = kernal_func(self._ngrid)
 
         new_alt = np.sort(np.unique(np.concatenate([ap_one, ap_two])))
         new_alt_gpu = to_gpu(new_alt, self._memory_pool.allocate)
@@ -424,7 +426,7 @@ class TransmissionCudaModelTwo(ForwardModel):
                       block=(THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y,1), grid=(NUM_BLOCK_X, NUM_BLOCK_Y,1) )
 
         grid_size = self._ngrid
-        rprs_kernal = self._absorption_kernal( grid_size)
+        rprs_kernal = absorption_kernal( grid_size)
 
         THREAD_PER_BLOCK_X = 256
         NUM_BLOCK_X = int(math.ceil(grid_size/THREAD_PER_BLOCK_X))

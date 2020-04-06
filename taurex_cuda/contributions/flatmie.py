@@ -7,7 +7,7 @@ from pycuda.compiler import SourceModule
 from functools import lru_cache
 import math
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=400)
 def _flat_kernal(grid_size):
 
     code = f"""

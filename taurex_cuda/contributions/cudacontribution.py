@@ -7,7 +7,7 @@ from pycuda.gpuarray import GPUArray, zeros
 import pycuda.driver as drv
 import numpy as np
 import math
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=400)
 def _sum_kernal(nlayers, ngrid):
 
     code = f"""
@@ -29,7 +29,7 @@ def _sum_kernal(nlayers, ngrid):
     mod = SourceModule(code)
     return mod.get_function('sum_sigma')
 
-@lru_cache(maxsize=30)
+@lru_cache(maxsize=400)
 def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_layer=0):
     extra = '+layer'
     if with_sigma_offset:

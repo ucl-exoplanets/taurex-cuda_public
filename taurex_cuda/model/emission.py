@@ -10,6 +10,120 @@ from ..utils.emission import cuda_blackbody
 import pycuda.tools as pytools
 from taurex_cuda.contributions.cudacontribution import CudaContribution
 
+
+@lru_cache(maxsize=400
+def gen_partial_kernal(ngauss, nlayers, grid_size):
+    from taurex.constants import PI
+    mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
+    mu_quads = mu[ngauss:]
+
+    code = f"""
+
+    __global__ void quadrature_kernal(double* __restrict__ dest, 
+                                        double* __restrict__ layer_tau, 
+                                        const double* __restrict__ dtau, 
+                                        const double* __restrict__ BB)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        
+    if ( i >= {grid_size} )
+        return;
+    """
+
+    for idx,mu in enumerate(mu_quads):
+        code+=f"""
+            
+            double I_{idx} = 0.0;
+
+        """
+
+    code+=f"""
+        
+
+
+        for (int layer = 0; layer < {nlayers}; layer++)
+        {{
+
+            double _dtau = dtau[layer*{grid_size} + i];
+            double _layer_tau = layer_tau[layer*{grid_size} + i];
+            double _BB = BB[layer*{grid_size} + i]*{1.0/PI};
+            layer_tau[layer*{grid_size} + i] = exp(-_layer_tau) - exp(-_dtau);
+            _dtau += _layer_tau;
+
+            if (layer == 0){{
+            
+    """
+    for idx,mu in enumerate(mu_quads):
+        code += f"""
+
+            I_{idx} += exp(-_dtau*{1.0/mu})*_BB;
+        """
+    code+=f"""
+    }}
+    """
+    for idx,mu in enumerate(mu_quads):
+        code += f"""
+
+            I_{idx} += (exp(-_layer_tau*{1.0/mu}) - exp(-_dtau*{1.0/mu}))*_BB;
+        """
+    
+    
+    
+    code += f"""
+            }}
+
+        """
+    
+    for idx,mu in enumerate(mu_quads):
+        code +=f"""
+            dest[{idx*grid_size}+i] = I_{idx};
+        
+        """
+
+
+    code+=f"""
+    }}
+    """
+
+    mod = SourceModule(code)
+    return mod.get_function('quadrature_kernal')
+
+
+@lru_cache(maxsize=400)
+def gen_coeff(ngauss, nlayers, grid_size):
+    from taurex.constants import PI
+    mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
+    mu_quads = mu[ngauss:]
+    wi_quads = weight[ngauss:]
+
+    code = f"""
+
+    __global__ void quadrature_kernal(double* __restrict__ dest, 
+                                        const double * __restrict__ mu,
+                                        const double * __restrict__ wi,
+                                        const double* __restrict__ tau)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        
+    if ( i >= {grid_size} )
+        return;
+
+        double _I=0.0;
+        double _mu = 0.0;
+        double _wi = 0.0;
+        for (int g =0; g < {ngauss}; g++){{
+            _mu = mu[g];
+            _wi = wi[g];
+            _I += I[g*{grid_size}+i]*_mu*_wi;
+        }}
+
+        dest[i] = {2.0*PI}*_I;
+    }}
+    """
+
+    mod = SourceModule(code)
+    return mod.get_function('quadrature_kernal')
+
 class EmissionCudaModel(SimpleForwardModel):
     """
 
@@ -156,118 +270,7 @@ class EmissionCudaModel(SimpleForwardModel):
         mod = SourceModule(code)
         return mod.get_function('quadrature_kernal')
 
-    @lru_cache(maxsize=4)
-    def _gen_partial_kernal(self, ngauss, nlayers, grid_size):
-        from taurex.constants import PI
-        mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
-        mu_quads = mu[ngauss:]
 
-        code = f"""
-
-        __global__ void quadrature_kernal(double* __restrict__ dest, 
-                                          double* __restrict__ layer_tau, 
-                                          const double* __restrict__ dtau, 
-                                          const double* __restrict__ BB)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-            
-        if ( i >= {grid_size} )
-            return;
-        """
-
-        for idx,mu in enumerate(mu_quads):
-            code+=f"""
-                
-                double I_{idx} = 0.0;
-
-            """
-
-        code+=f"""
-            
-
-
-            for (int layer = 0; layer < {nlayers}; layer++)
-            {{
-
-                double _dtau = dtau[layer*{grid_size} + i];
-                double _layer_tau = layer_tau[layer*{grid_size} + i];
-                double _BB = BB[layer*{grid_size} + i]*{1.0/PI};
-                layer_tau[layer*{grid_size} + i] = exp(-_layer_tau) - exp(-_dtau);
-                _dtau += _layer_tau;
-
-                if (layer == 0){{
-                
-        """
-        for idx,mu in enumerate(mu_quads):
-            code += f"""
-
-                I_{idx} += exp(-_dtau*{1.0/mu})*_BB;
-            """
-        code+=f"""
-        }}
-        """
-        for idx,mu in enumerate(mu_quads):
-            code += f"""
-
-                I_{idx} += (exp(-_layer_tau*{1.0/mu}) - exp(-_dtau*{1.0/mu}))*_BB;
-            """
-        
-        
-        
-        code += f"""
-                }}
-
-            """
-        
-        for idx,mu in enumerate(mu_quads):
-            code +=f"""
-                dest[{idx*grid_size}+i] = I_{idx};
-            
-            """
-
-
-        code+=f"""
-        }}
-        """
-
-        mod = SourceModule(code)
-        return mod.get_function('quadrature_kernal')
-
-
-    @lru_cache(maxsize=4)
-    def _gen_coeff(self, ngauss, nlayers, grid_size):
-        from taurex.constants import PI
-        mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
-        mu_quads = mu[ngauss:]
-        wi_quads = weight[ngauss:]
-
-        code = f"""
-
-        __global__ void quadrature_kernal(double* __restrict__ dest, 
-                                          const double * __restrict__ mu,
-                                          const double * __restrict__ wi,
-                                          const double* __restrict__ tau)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-            
-        if ( i >= {grid_size} )
-            return;
-
-            double _I=0.0;
-            double _mu = 0.0;
-            double _wi = 0.0;
-            for (int g =0; g < {ngauss}; g++){{
-                _mu = mu[g];
-                _wi = wi[g];
-                _I += I[g*{grid_size}+i]*_mu*_wi;
-            }}
-
-            dest[i] = {2.0*PI}*_I;
-        }}
-        """
-
-        mod = SourceModule(code)
-        return mod.get_function('quadrature_kernal')
 
 
 
@@ -320,7 +323,7 @@ class EmissionCudaModel(SimpleForwardModel):
             contrib.contribute(self, self._start_dtau, self._end_dtau, self._density_offset, 0,
                                density_profile, dtau, path_length=self._dz, with_sigma_offset=True)
         drv.Context.synchronize()
-        integral_kernal = self._gen_partial_kernal(self._ngauss, self.nLayers, wngrid_size)
+        integral_kernal = gen_partial_kernal(self._ngauss, self.nLayers, wngrid_size)
 
         THREAD_PER_BLOCK_X = 64
         

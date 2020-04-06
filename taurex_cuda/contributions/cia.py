@@ -8,7 +8,7 @@ from pycuda.tools import DeviceMemoryPool
 from functools import lru_cache
 
 import math
-@lru_cache(maxsize=20)
+@lru_cache(maxsize=400)
 def _contribute_cia_kernal(nlayers, grid_size,start_layer=0, with_sigma_offset=False):
     
     extra = '+layer'
