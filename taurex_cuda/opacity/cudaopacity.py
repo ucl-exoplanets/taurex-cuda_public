@@ -102,7 +102,7 @@ class CudaOpacity(Logger):
         self._strides = xsecgrid.strides
         self._gpu_grid = GPUArray(shape=xsecgrid.shape,dtype=xsecgrid.dtype )
         self._gpu_grid.set(xsecgrid)
-        self.kernal_func.cache_clear()
+        
 
     def _get_kernal_function(self, nlayers=100, min_wn=None, max_wn=None):
         min_grid_idx = 0
