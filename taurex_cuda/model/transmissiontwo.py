@@ -52,8 +52,8 @@ def kernal_func(grid_length):
     
     """
     
-    self._module = SourceModule(code)
-    interp_kernal = self._module.get_function("interp_tau")
+    module = SourceModule(code)
+    interp_kernal = module.get_function("interp_tau")
     
     return interp_kernal
 
