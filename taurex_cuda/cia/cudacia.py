@@ -10,6 +10,46 @@ import math
 from taurex.cache import CIACache
 
 
+@lru_cache(maxsize=400)
+def kernal_func(nlayers, min_idx, stride_1, grid_length):
+    
+    
+    
+    code = f"""
+    
+    __global__ void interp_mix_layers(double* dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
+                                        const double* __restrict__ temperature, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
+                                        const double * __restrict__ mix_ratio)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+        
+        if ( i >= {grid_length} )
+            return;
+        
+        if ( j >= {nlayers} )
+            return;
+        
+        
+        int Tmin_idx = Tmin[j];
+        int Tmax_idx = Tmax[j];
+        double Tmin_val = tgrid[Tmin_idx];
+        double Tmax_val = tgrid[Tmax_idx];
+        double T = temperature[j];
+        double mix = mix_ratio[j];
+        double _x11 = xsec_grid[Tmin_idx*{stride_1} + i + {min_idx}];
+        double _x12 = xsec_grid[Tmax_idx*{stride_1} + i + {min_idx}];
+        double diff = (Tmax_val - Tmin_val+1.0);
+        dest[j*{grid_length} + i] = (_x11 * diff - (T - Tmin_val)*(_x11-_x12) )*mix/diff;
+    }}                    
+    
+    
+    """
+
+    module = SourceModule(code)
+    
+    return module
+
 class CudaCIA(Logger):
     
     def __init__(self, pair_name, wngrid=None):
@@ -32,7 +72,6 @@ class CudaCIA(Logger):
         self._strides = xsecgrid.strides
         self._gpu_grid = GPUArray(shape=xsecgrid.shape, dtype=xsecgrid.dtype )
         self._gpu_grid.set(xsecgrid)
-        self.kernal_func.cache_clear()
 
     def find_closest_index(self,T):
         t_min=self._xsec.temperatureGrid.searchsorted(T,side='right')-1
@@ -87,48 +126,8 @@ class CudaCIA(Logger):
         if max_wn is not None:
             max_grid_idx = np.argmax(self._wngrid>=max_wn)+1
         grid_length = self._wngrid[min_grid_idx:max_grid_idx].shape[0]
-        return self.kernal_func(nlayers, min_grid_idx, grid_length), grid_length
+        return kernal_func(nlayers, min_grid_idx, self._strides[0]//8, grid_length).get_function("interp_mix_layers"), grid_length
     
-    @lru_cache(maxsize=4)
-    def kernal_func(self, nlayers, min_idx, grid_length):
-        
-        
-        
-        code = f"""
-        
-        __global__ void interp_mix_layers(double* dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
-                                          const double* __restrict__ temperature, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
-                                          const double * __restrict__ mix_ratio)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-            unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-            
-            if ( i >= {grid_length} )
-                return;
-            
-            if ( j >= {nlayers} )
-                return;
-            
-            
-            int Tmin_idx = Tmin[j];
-            int Tmax_idx = Tmax[j];
-            double Tmin_val = tgrid[Tmin_idx];
-            double Tmax_val = tgrid[Tmax_idx];
-            double T = temperature[j];
-            double mix = mix_ratio[j];
-            double _x11 = xsec_grid[Tmin_idx*{self._strides[0]//8} + i + {min_idx}];
-            double _x12 = xsec_grid[Tmax_idx*{self._strides[0]//8} + i + {min_idx}];
-            double diff = (Tmax_val - Tmin_val+1.0);
-            dest[j*{grid_length} + i] = (_x11 * diff - (T - Tmin_val)*(_x11-_x12) )*mix/diff;
-        }}                    
-        
-        
-        """
-        
-        self._module = SourceModule(code)
-        interp_kernal = self._module.get_function("interp_mix_layers")
-        
-        return interp_kernal
     
     
     def kernal(self, nlayers=100,wngrid=None):
