@@ -9,6 +9,69 @@ from pycuda.compiler import SourceModule
 import math
 from taurex.cache import OpacityCache
 
+@lru_cache(maxsize=500)
+def kernal_func(nlayers, min_idx, stride_1, stride_2, grid_length):
+    
+    
+    
+    code = f"""
+    
+    __global__ void interp_mix_layers(double* __restrict__ dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
+                                        const double* __restrict__ pgrid, const double* __restrict__ temperature,
+                                    const double* __restrict__ pressure, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
+                                    const int* __restrict__ Pmin, const int* __restrict__ Pmax, const double * __restrict__ mix_ratio)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+        
+        if ( i >= {grid_length} )
+            return;
+        
+        if ( j >= {nlayers} )
+            return;
+        
+        
+        int Tmin_idx = Tmin[j];
+        int Tmax_idx = Tmax[j];
+        int Pmin_idx = Pmin[j];
+        int Pmax_idx = Pmax[j];
+        double Tmin_val = tgrid[Tmin_idx];
+        double Tmax_val = tgrid[Tmax_idx];
+        double Pmin_val = pgrid[Pmin_idx];
+        double Pmax_val = pgrid[Pmax_idx];
+        double T = temperature[j];
+        double P = pressure[j];
+        double mix = mix_ratio[j];            
+        double _x11 = xsec_grid[Pmin_idx*{stride_1} + Tmin_idx*{stride_2} + i + {min_idx}];
+        double _x12 = xsec_grid[Pmin_idx*{stride_1} + Tmax_idx*{stride_2} + i + {min_idx}];
+        double _x21 = xsec_grid[Pmax_idx*{stride_1} + Tmin_idx*{stride_2} + i + {min_idx}];
+        double _x22 = xsec_grid[Pmax_idx*{stride_1} + Tmax_idx*{stride_2} + i + {min_idx}];
+        double tdiff = Tmax_val - Tmin_val;
+        double pdiff = Pmax_val - Pmin_val;
+
+
+        if (pdiff == 0.0 && tdiff == 0.0){{
+            dest[j*{grid_length} + i] = _x22*mix/10000.0;
+        }}else if (pdiff == 0.0){{
+            dest[j*{grid_length} + i] = (_x11 * tdiff - (T - Tmin_val)*(_x11-_x12) )*mix/tdiff/10000.0;
+        }}else if (tdiff == 0.0){{
+            dest[j*{grid_length} + i] = (_x11 * pdiff - (P - Pmin_val)*(_x11-_x21) )*mix/pdiff/10000.0;
+        }}else{{
+
+            dest[j*{grid_length} + i] =((_x11*pdiff*tdiff - (P - Pmin_val)*tdiff*(_x11 - _x21) - (T - Tmin_val)*(-(P - Pmin_val)*(_x11 - _x21) + 
+                                        (P - Pmin_val)*(_x12 - _x22) + pdiff*(_x11 - _x12)))/
+                                        (pdiff*tdiff))*mix/10000.0;
+        }}
+    }}                    
+    
+    
+    """
+    
+    module = SourceModule(code)
+    interp_kernal = module
+    
+    return module
+
 
 class CudaOpacity(Logger):
     
@@ -49,70 +112,12 @@ class CudaOpacity(Logger):
         if max_wn is not None:
             max_grid_idx = np.argmax(self._wngrid>=max_wn)+1
         grid_length = self._wngrid[min_grid_idx:max_grid_idx].shape[0]
-        return self.kernal_func(nlayers, min_grid_idx, grid_length), grid_length
+
+        stride_1, stride_2 = self._strides[0:2]
+
+        return kernal_func(nlayers, min_grid_idx,stride_1//8,stride_2//8, grid_length).get_function("interp_mix_layers"), grid_length
     
-    @lru_cache(maxsize=4)
-    def kernal_func(self, nlayers, min_idx, grid_length):
-        
-        
-        
-        code = f"""
-        
-        __global__ void interp_mix_layers(double* __restrict__ dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
-                                         const double* __restrict__ pgrid, const double* __restrict__ temperature,
-                                      const double* __restrict__ pressure, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
-                                      const int* __restrict__ Pmin, const int* __restrict__ Pmax, const double * __restrict__ mix_ratio)
-        {{
-            unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
-            unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
-            
-            if ( i >= {grid_length} )
-                return;
-            
-            if ( j >= {nlayers} )
-                return;
-            
-            
-            int Tmin_idx = Tmin[j];
-            int Tmax_idx = Tmax[j];
-            int Pmin_idx = Pmin[j];
-            int Pmax_idx = Pmax[j];
-            double Tmin_val = tgrid[Tmin_idx];
-            double Tmax_val = tgrid[Tmax_idx];
-            double Pmin_val = pgrid[Pmin_idx];
-            double Pmax_val = pgrid[Pmax_idx];
-            double T = temperature[j];
-            double P = pressure[j];
-            double mix = mix_ratio[j];            
-            double _x11 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
-            double _x12 = xsec_grid[Pmin_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
-            double _x21 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmin_idx*{self._strides[1]//8} + i + {min_idx}];
-            double _x22 = xsec_grid[Pmax_idx*{self._strides[0]//8} + Tmax_idx*{self._strides[1]//8} + i + {min_idx}];
-            double tdiff = Tmax_val - Tmin_val;
-            double pdiff = Pmax_val - Pmin_val;
 
-
-            if (pdiff == 0.0 && tdiff == 0.0){{
-                dest[j*{grid_length} + i] = _x22*mix/10000.0;
-            }}else if (pdiff == 0.0){{
-                dest[j*{grid_length} + i] = (_x11 * tdiff - (T - Tmin_val)*(_x11-_x12) )*mix/tdiff/10000.0;
-            }}else if (tdiff == 0.0){{
-                dest[j*{grid_length} + i] = (_x11 * pdiff - (P - Pmin_val)*(_x11-_x21) )*mix/pdiff/10000.0;
-            }}else{{
-
-                dest[j*{grid_length} + i] =((_x11*pdiff*tdiff - (P - Pmin_val)*tdiff*(_x11 - _x21) - (T - Tmin_val)*(-(P - Pmin_val)*(_x11 - _x21) + 
-                                            (P - Pmin_val)*(_x12 - _x22) + pdiff*(_x11 - _x12)))/
-                                            (pdiff*tdiff))*mix/10000.0;
-            }}
-        }}                    
-        
-        
-        """
-        
-        self._module = SourceModule(code)
-        interp_kernal = self._module.get_function("interp_mix_layers")
-        
-        return interp_kernal
     
     
     def kernal(self, nlayers=100,wngrid=None):
