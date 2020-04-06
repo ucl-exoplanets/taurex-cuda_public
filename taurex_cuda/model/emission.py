@@ -11,7 +11,7 @@ import pycuda.tools as pytools
 from taurex_cuda.contributions.cudacontribution import CudaContribution
 
 
-@lru_cache(maxsize=400
+@lru_cache(maxsize=400)
 def gen_partial_kernal(ngauss, nlayers, grid_size):
     from taurex.constants import PI
     mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
