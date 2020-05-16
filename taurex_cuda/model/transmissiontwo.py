@@ -296,9 +296,11 @@ class TransmissionCudaModelTwo(ForwardModel):
 
 
     def path_integral(self, wngrid, return_contrib):
+        from taurex.util.util import compute_dz
+        total_layers = self.nLayers
 
-        dz_one = np.gradient(self._model_one.altitudeProfile)
-        dz_two = np.gradient(self._model_two.altitudeProfile)
+        dz_one = compute_dz(self._model_one.altitudeProfile)
+        dz_two = compute_dz(self._model_two.altitudeProfile)
 
         wngrid_size = wngrid.shape[0]
         self._ngrid = wngrid_size

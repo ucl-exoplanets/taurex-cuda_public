@@ -293,15 +293,18 @@ class EmissionCudaModel(SimpleForwardModel):
 
 
     def evaluate_emission(self, wngrid, return_contrib):
-        dz = np.gradient(self.altitudeProfile)
+        from taurex.util.util import compute_dz
+        total_layers = self.nLayers
+
+        dz = compute_dz(self.altitudeProfile)
+
         dz = np.array([dz for x in range(self.nLayers)])
         self._dz.set(dz)
 
         wngrid_size = wngrid.shape[0]
-        total_layers = self.nLayers
         temperature = self.temperatureProfile
         density_profile = to_gpu(self.densityProfile, allocator=self._memory_pool.allocate)
-        total_layers = self.nLayers
+
 
         self._cuda_contribs = [c for c in self.contribution_list if isinstance(c, CudaContribution)]
         self._noncuda_contribs = [c for c in self.contribution_list if not isinstance(c, CudaContribution)]
@@ -356,7 +359,10 @@ class EmissionCudaModel(SimpleForwardModel):
         from taurex.constants import PI
 
         wngrid_size = wngrid.shape[0]
-        dz = np.gradient(self.altitudeProfile)
+        
+        dz = np.zeros(total_layers)
+        dz[:-1] = np.diff(self.altitudeProfile)
+        dz[-1] = self.altitudeProfile[-1] - self.altitudeProfile[-2]
 
         density = self.densityProfile
         layer_tau = np.zeros(shape=(total_layers, wngrid_size))

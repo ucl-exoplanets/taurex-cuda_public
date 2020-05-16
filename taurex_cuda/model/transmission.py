@@ -150,8 +150,10 @@ class TransmissionCudaModel(SimpleForwardModel):
 
 
     def path_integral(self, wngrid, return_contrib):
+        from taurex.util.util import compute_dz
+        total_layers = self.nLayers
 
-        dz = np.gradient(self.altitudeProfile)
+        dz = compute_dz(self.altitudeProfile)
 
         wngrid_size = wngrid.shape[0]
         self._ngrid = wngrid_size
@@ -159,7 +161,7 @@ class TransmissionCudaModel(SimpleForwardModel):
 
         density_profile = to_gpu(self.densityProfile,allocator=self._memory_pool.allocate)
 
-        total_layers = self.nLayers
+        
 
         self._cuda_contribs = [c for c in self.contribution_list if isinstance(c, CudaContribution)]
         self._noncuda_contribs = [c for c in self.contribution_list if not isinstance(c, CudaContribution)]
