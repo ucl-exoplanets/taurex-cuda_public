@@ -187,9 +187,9 @@ class EmissionCudaModel(SimpleForwardModel):
         self._memory_pool = pytools.DeviceMemoryPool()
     def set_num_gauss(self, value):
         self._ngauss = int(value)
-        mu, weight = np.polynomial.legendre.leggauss(self._ngauss*2)
-        self._mu_quads = mu[self._ngauss:]
-        self._wi_quads = weight[self._ngauss:]
+        mu, weight = np.polynomial.legendre.leggauss(self._ngauss)
+        self._mu_quads = (mu+1)/2
+        self._wi_quads = (weight+1)/2
     def set_num_streams(self, num_streams):
         self._streams = [drv.Stream() for x in range(num_streams)]
 
