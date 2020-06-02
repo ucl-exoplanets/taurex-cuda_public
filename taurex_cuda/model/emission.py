@@ -212,9 +212,9 @@ class EmissionCudaModel(SimpleForwardModel):
     @lru_cache(maxsize=4)
     def _gen_ngauss_kernal(self, ngauss, nlayers, grid_size):
         from taurex.constants import PI
-        mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
-        mu_quads = mu[ngauss:]
-        wi_quads = weight[ngauss:]
+        mu, weight = np.polynomial.legendre.leggauss(ngauss)
+        mu_quads = (mu+1)/2
+        wi_quads = weight
 
         code = f"""
 
