@@ -14,8 +14,8 @@ from taurex_cuda.contributions.cudacontribution import CudaContribution
 @lru_cache(maxsize=400)
 def gen_partial_kernal(ngauss, nlayers, grid_size):
     from taurex.constants import PI
-    mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
-    mu_quads = mu[ngauss:]
+    mu, weight = np.polynomial.legendre.leggauss(ngauss)
+    mu_quads = (mu+1)/2
 
     code = f"""
 
@@ -92,9 +92,9 @@ def gen_partial_kernal(ngauss, nlayers, grid_size):
 @lru_cache(maxsize=400)
 def gen_coeff(ngauss, nlayers, grid_size):
     from taurex.constants import PI
-    mu, weight = np.polynomial.legendre.leggauss(ngauss*2)
-    mu_quads = mu[ngauss:]
-    wi_quads = weight[ngauss:]
+    mu, weight = np.polynomial.legendre.leggauss(ngauss)
+    mu_quads = (mu+1)/2
+    wi_quads = weight/2
 
     code = f"""
 
@@ -189,7 +189,7 @@ class EmissionCudaModel(SimpleForwardModel):
         self._ngauss = int(value)
         mu, weight = np.polynomial.legendre.leggauss(self._ngauss)
         self._mu_quads = (mu+1)/2
-        self._wi_quads = (weight+1)/2
+        self._wi_quads = (weight)/2
     def set_num_streams(self, num_streams):
         self._streams = [drv.Stream() for x in range(num_streams)]
 
