@@ -42,7 +42,7 @@ class AbsorptionCuda(CudaContribution):
 
         self.debug('Preparing model with %s', wngrid.shape)
         self._ngrid = wngrid.shape[0]
-        sigma_xsec = GPUArray(shape=(model.nLayers, wngrid.shape[0]), dtype=np.float64, allocator=self._memory_pool.allocate)
+        sigma_xsec = GPUArray(shape=(model.nLayers, wngrid.shape[0]), dtype=np.float64)
         # Loop through all active gases
         for gas in model.chemistry.activeGases:
 
