@@ -204,7 +204,7 @@ class EmissionCudaModel(SimpleForwardModel):
         self._start_dtau = to_gpu(np.array([x for x in range(self.nLayers)]).astype(np.int32))
         self._end_dtau = to_gpu(np.array([x+1 for x in range(self.nLayers)]).astype(np.int32))
 
-        self._dz = zeros(shape=(self.nLayers,self.nLayers, ),dtype=np.float64)
+        self._dz = zeros(shape=(self.nLayers,self.nLayers,),dtype=np.float64)
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
 
         self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
@@ -214,7 +214,7 @@ class EmissionCudaModel(SimpleForwardModel):
         from taurex.constants import PI
         mu, weight = np.polynomial.legendre.leggauss(ngauss)
         mu_quads = (mu+1)/2
-        wi_quads = weight
+        wi_quads = weight/2
 
         code = f"""
 

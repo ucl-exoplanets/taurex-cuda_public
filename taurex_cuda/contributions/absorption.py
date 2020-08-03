@@ -59,7 +59,7 @@ class AbsorptionCuda(CudaContribution):
             # Temporarily assign to master cross-section
             self.sigma_xsec = sigma_xsec
             yield gas, sigma_xsec
-
+        sigma_xsec = None
     @classmethod
     def input_keywords(cls):
         return ['AbsorptionCUDA', ]
