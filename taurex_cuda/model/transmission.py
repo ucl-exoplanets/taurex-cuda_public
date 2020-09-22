@@ -44,7 +44,7 @@ def absorption_kernal(nlayers, ngrid):
 class TransmissionCudaModel(SimpleForwardModel):
     """
 
-    A forward model for transits
+    A forward model for transits using GPU acceleration
 
     Parameters
     ----------
@@ -76,6 +76,9 @@ class TransmissionCudaModel(SimpleForwardModel):
 
     atm_max_pressure: float, optional
         Pressure at BOA. Used if ``pressure_profile`` is not defined.
+
+    num_streams: int, optional
+        Non-functional for now. 
 
     """
 
