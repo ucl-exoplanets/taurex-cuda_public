@@ -28,11 +28,19 @@ Or for the latest development version, directly from git::
 
     > pip install git+https://github.com/ucl-exoplanets/taurex-cuda.git
 
-You can verify if the plugin is functioning by running TauREx::
+You can verify if the plugin is functioning by seeing if TauREx successfully detects
+``cuda``::
 
     > taurex --plugins
 
-This will list all detected plugins and also reasons for their failure.
+    Successfully loaded plugins
+    ---------------------------
+    venotdiseq
+    ggchem
+    bhmie
+    cuda
+
+
 
 
 
