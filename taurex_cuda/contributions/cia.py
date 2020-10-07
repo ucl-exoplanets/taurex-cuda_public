@@ -28,7 +28,7 @@ def _contribute_cia_kernal(nlayers, grid_size,start_layer=0, with_sigma_offset=F
         if ( i >= {grid_size} )
             return;
         
-        for (unsigned int layer={start_layer}; layer<={nlayers}; layer++)
+        for (unsigned int layer={start_layer}; layer<{nlayers}; layer++)
         {{
             unsigned int _startK = startK[layer];
             unsigned int _endK = endK[layer];
