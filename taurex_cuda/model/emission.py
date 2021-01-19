@@ -127,7 +127,7 @@ def gen_coeff(ngauss, nlayers, grid_size):
 class EmissionCudaModel(SimpleForwardModel):
     """
 
-    A forward model for transits
+    A forward model for eclipse models using CUDA
 
     Parameters
     ----------
@@ -159,6 +159,9 @@ class EmissionCudaModel(SimpleForwardModel):
 
     atm_max_pressure: float, optional
         Pressure at BOA. Used if ``pressure_profile`` is not defined.
+
+    ngauss: int, optional
+        Number of Gaussian quadrature points. Default is 4
 
     """
 

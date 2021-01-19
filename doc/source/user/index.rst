@@ -13,6 +13,7 @@ and the library.
     Overview <overview>
     Input Keywords <keywords>
     Using with MPI <mpi>
+    Performance <performance>
     Library <library>
 
 
