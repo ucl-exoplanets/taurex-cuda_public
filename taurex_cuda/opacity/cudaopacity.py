@@ -72,9 +72,67 @@ def kernal_func(nlayers, min_idx, stride_1, stride_2, grid_length):
     
     return module
 
+@lru_cache(maxsize=500)
+def kernal_func_II(nlayers, min_idx, stride_1, stride_2, grid_length):
+    
+    
+    
+    code = f"""
+    
+    __global__ void interp_mix_layers(double* __restrict__ dest, const double* __restrict__ xsec_grid,const double* __restrict__ tgrid, 
+                                        const double* __restrict__ pgrid, const double* __restrict__ temperature,
+                                    const double* __restrict__ pressure, const int * __restrict__ Tmin, const int * __restrict__ Tmax, 
+                                    const int* __restrict__ Pmin, const int* __restrict__ Pmax, const double * __restrict__ mix_ratio)
+    {{
+        unsigned int i = (blockIdx.x * blockDim.x) + threadIdx.x;
+        unsigned int j = (blockIdx.y * blockDim.y) + threadIdx.y;
+        
+        if ( i >= {grid_length} )
+            return;
+        
+        if ( j >= {nlayers} )
+            return;
+        
+        
+        int Tmin_idx = Tmin[j];
+        int Tmax_idx = Tmax[j];
+        int Pmin_idx = Pmin[j];
+        int Pmax_idx = Pmax[j];
+        double Tmin_val = tgrid[Tmin_idx];
+        double Tmax_val = tgrid[Tmax_idx];
+        double Pmin_val = pgrid[Pmin_idx];
+        double Pmax_val = pgrid[Pmax_idx];
+
+        double mix = mix_ratio[j];            
+        double _x11 = xsec_grid[Pmin_idx*{stride_1} + Tmin_idx*{stride_2} + i + {min_idx}];
+        double _x12 = xsec_grid[Pmin_idx*{stride_1} + Tmax_idx*{stride_2} + i + {min_idx}];
+        double _x21 = xsec_grid[Pmax_idx*{stride_1} + Tmin_idx*{stride_2} + i + {min_idx}];
+        double _x22 = xsec_grid[Pmax_idx*{stride_1} + Tmax_idx*{stride_2} + i + {min_idx}];
+        double tdiff = Tmax_val - Tmin_val;
+        double pdiff = Pmax_val - Pmin_val;
+        if (tdiff != 0.0){{ 
+            tdiff = (temperature[j] - Tmin_val)/tdiff;
+        }}
+        if (pdiff != 0.0){{ 
+            pdiff = (pressure[j] - Pmin_val)/pdiff;
+        }}
+
+        dest[j*{grid_length} + i] = _x11 - pdiff*(_x11 - _x21) - pdiff * tdiff*(_x21 - _x11 + _x12 - _x22 ) - tdiff*(_x11-_x12)  
+        }}
+    }}                    
+    
+    
+    """
+    
+    module = SourceModule(code)
+    interp_kernal = module
+    
+    return module
 
 class CudaOpacity(Logger):
     
+    KERNAL_METHOD = kernal_func
+
     def __init__(self, molecule_name, wngrid=None):
         super().__init__(self.__class__.__name__)
         self._xsec = OpacityCache()[molecule_name]
@@ -115,7 +173,7 @@ class CudaOpacity(Logger):
 
         stride_1, stride_2 = self._strides[0:2]
 
-        return kernal_func(nlayers, min_grid_idx,stride_1//8,stride_2//8, grid_length).get_function("interp_mix_layers"), grid_length
+        return self.KERNAL_METHOD(nlayers, min_grid_idx,stride_1//8,stride_2//8, grid_length).get_function("interp_mix_layers"), grid_length
     
 
     
