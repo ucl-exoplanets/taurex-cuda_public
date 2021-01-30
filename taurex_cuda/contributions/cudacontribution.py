@@ -68,12 +68,67 @@ def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_la
     func.prepare('PPPPPPPi')
     return func
 
+@lru_cache(maxsize=400)
+def _contribute_tau_kernal_II(nlayers, grid_size, with_sigma_offset=False, start_layer=0):
+    extra = '+layer'
+    if with_sigma_offset:
+        extra = ''
+
+
+    code = f"""
+    __global__ void contribute_tau(double* dest, const double* __restrict__ sigma, 
+                                   const double* __restrict__ density, const double* __restrict__ path,
+                                   const int* __restrict__ startK, const int* __restrict__ endK,
+                                   const int* __restrict__ density_offset, const int total_layers)
+    {{
+        __shared__ double path_cache[{nlayers}];
+        __shared__ double dens_cache[{nlayers}];
+
+        const unsigned int grid = (blockIdx.x * blockDim.x) + threadIdx.x;
+        const unsigned int layer = (blockIdx.y * blockDim.y) + threadIdx.y; + {start_layer};
+        
+        unsigned int _s_layer = threadIdx.y*blockDim.x + threadIdx.x;
+                
+
+        if (_s_layer < {nlayers})
+        {{
+            path_cache[_s_layer] = path[layer*{nlayers} + _s_layer];
+            dens_cache[_s_layer] = density[_s_layer];
+        }}
+
+        __syncthreads();
+
+        if ( grid >= {grid_size} )
+            return;
+        if (layer >= {nlayers})
+            return;
+        
+        const unsigned int _startK = startK[layer];
+        const unsigned int _endK = endK[layer];
+        const unsigned int _offset = density_offset[layer];
+        double _result = 0.0;
+        for (unsigned int k = _startK; k < _endK; k++)
+        {{
+            double _path = path_cache[k];
+            double _density = dens_cache[k+_offset];
+            _result += sigma[(k{extra})*{grid_size} + grid]*_path*_density;
+        }}
+        dest[layer*{grid_size} + grid] += _result; 
+
+    
+    }}
+    
+    """
+    mod = SourceModule(code,options=['-O3'])
+    func = mod.get_function('contribute_tau')
+    func.prepare('PPPPPPPi')
+    return func
 
 def cuda_contribute_tau(startK, endK, density_offset, sigma, density, path, 
                         nlayers, ngrid, tau=None, with_sigma_offset=False, start_layer=0,total_layers=None,
                         stream=None):
 
-    kernal = _contribute_tau_kernal(nlayers, ngrid, with_sigma_offset=with_sigma_offset, start_layer=start_layer)
+    kernal = _contribute_tau_kernal_II(nlayers, ngrid, with_sigma_offset=with_sigma_offset, start_layer=start_layer)
     my_tau = tau
     if total_layers is None:
         total_layers = nlayers
@@ -82,12 +137,18 @@ def cuda_contribute_tau(startK, endK, density_offset, sigma, density, path,
     
 
 
-    THREAD_PER_BLOCK_X = 256
-    NUM_BLOCK_X = int(math.ceil(ngrid/THREAD_PER_BLOCK_X))
+    THREAD_PER_BLOCK_X = 32
+    THREAD_PER_BLOCK_Y = 32
+
+    #THREAD_PER_BLOCK_X = 128
+    #THREAD_PER_BLOCK_Y = 1
+    NUM_BLOCK_Y = int(math.ceil((total_layers)/THREAD_PER_BLOCK_Y))
+    NUM_BLOCK_X = int(math.ceil((ngrid)/THREAD_PER_BLOCK_X))
+    #NUM_BLOCK_Y = 1 
 
     kernal.prepared_call(
-        (NUM_BLOCK_X, 1, 1),
-        (THREAD_PER_BLOCK_X, 1, 1),
+        (NUM_BLOCK_X, NUM_BLOCK_Y, 1),
+        (THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y, 1),
         my_tau.gpudata, sigma.gpudata, density.gpudata, path.gpudata, startK.gpudata, endK.gpudata, density_offset.gpudata,np.int32(total_layers))
     if tau is None:
         return my_tau
