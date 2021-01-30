@@ -173,7 +173,7 @@ class CudaOpacity(Logger):
 
         stride_1, stride_2 = self._strides[0:2]
 
-        return self.KERNAL_METHOD(nlayers, min_grid_idx,stride_1//8,stride_2//8, grid_length).get_function("interp_mix_layers"), grid_length
+        return kernal_func(nlayers, min_grid_idx,stride_1//8,stride_2//8, grid_length).get_function("interp_mix_layers"), grid_length
     
 
     
