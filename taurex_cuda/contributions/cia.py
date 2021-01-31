@@ -95,9 +95,9 @@ def _contribute_cia_kernal_II(nlayers, grid_size,start_layer=0, with_sigma_offse
         {{
             double _path = path_cache[k];
             double _density = dens_cache[k+_offset];
-                dest[layer*{grid_size} + i] += sigma[(k{extra})*{grid_size} + i]*_path*_density*_density;
+            _result += sigma[(k{extra})*{grid_size} + grid]*_path*_density*_density;
         }}
-            
+        dest[layer*{grid_size} + grid] += _result;  
         
     
     }}
