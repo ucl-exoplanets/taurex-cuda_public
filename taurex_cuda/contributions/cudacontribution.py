@@ -124,6 +124,37 @@ def _contribute_tau_kernal_II(nlayers, grid_size, with_sigma_offset=False, start
     func.prepare('PPPPPPPi')
     return func
 
+
+def cuda_contribute_tau_old(startK, endK, density_offset, sigma, density, path, 
+                        nlayers, ngrid, tau=None, with_sigma_offset=False, start_layer=0,total_layers=None,
+                        stream=None):
+
+    kernal = _contribute_tau_kernal(nlayers, ngrid, with_sigma_offset=with_sigma_offset, start_layer=start_layer)
+    my_tau = tau
+    if total_layers is None:
+        total_layers = nlayers
+    if my_tau is None:
+        my_tau = GPUArray(shape=(nlayers,ngrid),dtype=np.float64)
+    
+
+
+    #THREAD_PER_BLOCK_X = 32
+    #THREAD_PER_BLOCK_Y = 32
+
+    THREAD_PER_BLOCK_X = 128
+    THREAD_PER_BLOCK_Y = 1
+    NUM_BLOCK_Y = int(math.ceil((total_layers)/THREAD_PER_BLOCK_Y))
+    #NUM_BLOCK_X = int(math.ceil((ngrid)/THREAD_PER_BLOCK_X))
+    NUM_BLOCK_Y = 1 
+
+    kernal.prepared_call(
+        (NUM_BLOCK_X, NUM_BLOCK_Y, 1),
+        (THREAD_PER_BLOCK_X, THREAD_PER_BLOCK_Y, 1),
+        my_tau.gpudata, sigma.gpudata, density.gpudata, path.gpudata, startK.gpudata, endK.gpudata, density_offset.gpudata,np.int32(total_layers))
+    if tau is None:
+        return my_tau
+
+
 def cuda_contribute_tau(startK, endK, density_offset, sigma, density, path, 
                         nlayers, ngrid, tau=None, with_sigma_offset=False, start_layer=0,total_layers=None,
                         stream=None):
