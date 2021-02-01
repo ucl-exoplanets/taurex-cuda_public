@@ -143,8 +143,8 @@ def cuda_contribute_tau_old(startK, endK, density_offset, sigma, density, path,
 
     THREAD_PER_BLOCK_X = 128
     THREAD_PER_BLOCK_Y = 1
-    NUM_BLOCK_Y = int(math.ceil((total_layers)/THREAD_PER_BLOCK_Y))
-    #NUM_BLOCK_X = int(math.ceil((ngrid)/THREAD_PER_BLOCK_X))
+    #NUM_BLOCK_Y = int(math.ceil((total_layers)/THREAD_PER_BLOCK_Y))
+    NUM_BLOCK_X = int(math.ceil((ngrid)/THREAD_PER_BLOCK_X))
     NUM_BLOCK_Y = 1 
 
     kernal.prepared_call(
