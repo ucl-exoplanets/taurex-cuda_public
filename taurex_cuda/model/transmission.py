@@ -104,6 +104,7 @@ class TransmissionCudaModel(SimpleForwardModel):
 
         self.set_num_streams(num_streams)
         self._memory_pool = pytools.DeviceMemoryPool()
+        self._tau_memory_pool = pytools.PageLockedMemoryPool()
     def compute_path_length(self, dz):
 
         
@@ -149,7 +150,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         self._density_offset = to_gpu(np.array(list(range(self.nLayers))).astype(np.int32))
         self._path_length = to_gpu(np.zeros(shape=(self.nLayers, self.nLayers)))
         
-        self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
+        #self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
 
     def path_integral(self, wngrid, return_contrib):
@@ -173,6 +174,7 @@ class TransmissionCudaModel(SimpleForwardModel):
 
 
         tau = zeros(shape=(total_layers, wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
+        tau_host = self._tau_memory_pool.allocate(shape=(total_layers, wngrid_size), dtype=np.float64)
         if not self._fully_cuda:
             tau.set(self.fallback_noncuda(total_layers, cpu_dl, self.densityProfile,dz))
 
@@ -189,9 +191,9 @@ class TransmissionCudaModel(SimpleForwardModel):
         final_rprs = None
         rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         self.compute_absorption(rprs,tau, dz)
-        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], tau.gpudata)
+        drv.memcpy_dtoh(tau_host, tau.gpudata)
         
-        final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+        final_tau = np.copy(tau_host)
         final_rprs = rprs.get()
 
         return final_rprs, final_tau
