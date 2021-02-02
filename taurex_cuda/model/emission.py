@@ -319,7 +319,7 @@ class EmissionCudaModel(SimpleForwardModel):
         BB = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         I = zeros(shape=(self._ngauss,wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         cuda_blackbody(wngrid, temperature.ravel(), out=BB)
-        tau_host = self._tau_memory_pool.allocate(shape=(total_layers, wngrid_size), dtype=np.float6
+        tau_host = self._tau_memory_pool.allocate(shape=(total_layers, wngrid_size), dtype=np.float64)
         if not self._fully_cuda:
             self.fallback_noncuda(layer_tau, dtau,wngrid,total_layers)
 
