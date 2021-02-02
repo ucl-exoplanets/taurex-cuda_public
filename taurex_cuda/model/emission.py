@@ -188,6 +188,7 @@ class EmissionCudaModel(SimpleForwardModel):
         self.set_num_gauss(ngauss)
         self.set_num_streams(1)
         self._memory_pool = pytools.DeviceMemoryPool()
+        self._tau_memory_pool = pytools.PageLockedMemoryPool()
     def set_num_gauss(self, value):
         self._ngauss = int(value)
         mu, weight = np.polynomial.legendre.leggauss(self._ngauss)
@@ -210,7 +211,7 @@ class EmissionCudaModel(SimpleForwardModel):
         self._dz = zeros(shape=(self.nLayers,self.nLayers,),dtype=np.float64)
         self._density_offset = zeros(shape=(self.nLayers,),dtype=np.int32)
 
-        self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
+        #self._tau_buffer= drv.pagelocked_zeros(shape=(self.nativeWavenumberGrid.shape[-1], self.nLayers,),dtype=np.float64)
 
     @lru_cache(maxsize=4)
     def _gen_ngauss_kernal(self, ngauss, nlayers, grid_size):
@@ -318,7 +319,7 @@ class EmissionCudaModel(SimpleForwardModel):
         BB = zeros(shape=(total_layers, wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         I = zeros(shape=(self._ngauss,wngrid_size), dtype=np.float64, allocator=self._memory_pool.allocate)
         cuda_blackbody(wngrid, temperature.ravel(), out=BB)
-
+        tau_host = self._tau_memory_pool.allocate(shape=(total_layers, wngrid_size), dtype=np.float6
         if not self._fully_cuda:
             self.fallback_noncuda(layer_tau, dtau,wngrid,total_layers)
 
@@ -338,9 +339,9 @@ class EmissionCudaModel(SimpleForwardModel):
         integral_kernal(I, layer_tau, dtau, BB,
                       block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
-
-        drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
-        final_tau = self._tau_buffer[:wngrid_size,:].reshape(self.nLayers,wngrid_size)
+        
+        #drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
+        final_tau = layer_tau.get(ary=tau_host, layer_tau.gpudata)
         #final_I= I.get()
         return I.get(),1/self._mu_quads[:,None],self._wi_quads[:,None],final_tau
         #return self.compute_final_flux(final_I), final_tau 
