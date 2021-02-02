@@ -339,9 +339,9 @@ class EmissionCudaModel(SimpleForwardModel):
         integral_kernal(I, layer_tau, dtau, BB,
                       block=(THREAD_PER_BLOCK_X, 1, 1), grid=(NUM_BLOCK_X, 1, 1))
 
-        
+        layer_tau.get(ary=tau_host, pagelocked=True)
         #drv.memcpy_dtoh(self._tau_buffer[:wngrid_size,:], layer_tau.gpudata)
-        final_tau = layer_tau.get(ary=tau_host, layer_tau.gpudata)
+        final_tau = tau_host
         #final_I= I.get()
         return I.get(),1/self._mu_quads[:,None],self._wi_quads[:,None],final_tau
         #return self.compute_final_flux(final_I), final_tau 
