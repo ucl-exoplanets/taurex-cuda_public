@@ -191,7 +191,7 @@ class TransmissionCudaModel(SimpleForwardModel):
         final_rprs = None
         rprs = zeros(shape=(wngrid_size), dtype=np.float64,allocator=self._memory_pool.allocate)
         self.compute_absorption(rprs,tau, dz)
-        drv.memcpy_dtoh(tau_host, tau.gpudata)
+        tau.get(arr=tau_host,pagelocked=True)
         
         final_tau = np.copy(tau_host)
         final_rprs = rprs.get()
