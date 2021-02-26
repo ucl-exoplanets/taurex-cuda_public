@@ -7,7 +7,7 @@ from taurex.log import Logger
 from pycuda.gpuarray import GPUArray, to_gpu
 from pycuda.compiler import SourceModule
 import math
-from taurex.cache import OpacityCache
+from taurex.cache import OpacityCache, GlobalCache
 
 @lru_cache(maxsize=500)
 def kernal_func(nlayers, min_idx, stride_1, stride_2, grid_length):
@@ -133,7 +133,7 @@ class CudaOpacity(Logger):
     
     KERNAL_METHOD = kernal_func
 
-    def __init__(self, molecule_name, wngrid=None):
+    def __init__(self, molecule_name, wngrid=None, manage_mem=False):
         super().__init__(self.__class__.__name__)
         self._xsec = OpacityCache()[molecule_name]
 
@@ -143,9 +143,10 @@ class CudaOpacity(Logger):
         self._gpu_tgrid = to_gpu(self._xsec.temperatureGrid)
         self._gpu_pgrid = to_gpu(self._xsec.pressureGrid)
         self._memory_pool = drv.DeviceMemoryPool()
-        self.transfer_xsec_grid(wngrid)
+        
+        self.transfer_xsec_grid(wngrid, manage_mem=manage_mem)
 
-    def transfer_xsec_grid(self, wngrid):
+    def transfer_xsec_grid(self, wngrid, manage_mem=False):
 
         self._wngrid = self._xsec.wavenumberGrid
         xsecgrid = self._xsec.xsecGrid
@@ -158,8 +159,13 @@ class CudaOpacity(Logger):
             xsecgrid = f(wngrid).ravel().reshape(*xsecgrid.shape[0:-1],-1) # Force contiguous array
 
         self._strides = xsecgrid.strides
-        self._gpu_grid = GPUArray(shape=xsecgrid.shape,dtype=xsecgrid.dtype )
-        self._gpu_grid.set(xsecgrid)
+        if manage_mem or GlobalCache()['cuda_managed_mem']:
+            self._gpu_grid = drv.managed_empty(xsecgrid.shape, xsecgrid.dtype, 
+                                               mem_flags=drv.mem_attach_flags.GLOBAL)
+            self._gpu_grid[...] = xsecgrid
+        else:
+            self._gpu_grid = to_gpu(xsecgrid)
+        
         
 
     def _get_kernal_function(self, nlayers=100, min_wn=None, max_wn=None):
