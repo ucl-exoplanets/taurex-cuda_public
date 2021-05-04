@@ -323,7 +323,6 @@ class EmissionCudaModel(SimpleForwardModel):
         if not self._fully_cuda:
             self.fallback_noncuda(layer_tau, dtau,wngrid,total_layers)
 
-
         for contrib in self._cuda_contribs:
             contrib.contribute(self, self._start_layer, self._end_layer, self._density_offset, 0,
                                 density_profile, layer_tau, path_length=self._dz, with_sigma_offset=True)
@@ -358,7 +357,7 @@ class EmissionCudaModel(SimpleForwardModel):
 
 
 
-    def fallback_noncuda(self, gpu_layer_tau, gpu_dtau,gpu_tau, wngrid, total_layers):
+    def fallback_noncuda(self, gpu_layer_tau, gpu_dtau, wngrid, total_layers):
         from taurex.util.emission import black_body
         from taurex.constants import PI
 
