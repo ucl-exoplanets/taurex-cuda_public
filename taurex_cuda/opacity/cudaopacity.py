@@ -147,7 +147,7 @@ class CudaOpacity(Logger):
         self.transfer_xsec_grid(wngrid, manage_mem=manage_mem)
 
     def transfer_xsec_grid(self, wngrid, manage_mem=False):
-
+        from ..mpi import gpu_single_allocate
         self._wngrid = self._xsec.wavenumberGrid
         xsecgrid = self._xsec.xsecGrid
 
@@ -164,7 +164,7 @@ class CudaOpacity(Logger):
                                                mem_flags=drv.mem_attach_flags.GLOBAL)
             self._gpu_grid[...] = xsecgrid
         else:
-            self._gpu_grid = to_gpu(xsecgrid)
+            self._gpu_grid = gpu_single_allocate(xsecgrid)
         
         
 
