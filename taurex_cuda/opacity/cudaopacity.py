@@ -164,7 +164,7 @@ class CudaOpacity(Logger):
                                                mem_flags=drv.mem_attach_flags.GLOBAL)
             self._gpu_grid[...] = xsecgrid
         else:
-            self._gpu_grid = gpu_single_allocate(xsecgrid)
+            self._gpu_grid = gpu_single_allocate(xsecgrid, logger=self)
         
         
 
