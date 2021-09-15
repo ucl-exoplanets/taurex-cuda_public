@@ -15,12 +15,15 @@ install_requires = ['taurex', 'pycuda',]
 
 entry_points = {'taurex.plugins': 'cuda = taurex_cuda'}
 
+version="1.0.0"
+
 setup(name='taurex_cuda',
       author="Ahmed Faris Al-Refaie",
       author_email="ahmed.al-refaie.12@ucl.ac.uk",
       license="BSD",
       description='Plugin to compute forward models using nVidia gpus ',
       packages=packages,
+      version=version,
       
       entry_points=entry_points,
       provides=provides,
