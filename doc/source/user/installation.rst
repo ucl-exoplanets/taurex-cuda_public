@@ -26,7 +26,7 @@ Once installed the plugin can be simply installed using::
 
 Or for the latest development version, directly from git::
 
-    > pip install git+https://github.com/ucl-exoplanets/taurex-cuda.git
+    > pip install git+https://github.com/ucl-exoplanets/taurex-cuda_public.git
 
 You can verify if the plugin is functioning by seeing if TauREx successfully detects
 ``cuda``::
