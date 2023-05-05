@@ -64,7 +64,7 @@ class RayleighCuda(CudaContribution):
 
     def build(self, model):
         super().build(model)
-        self._mix_array = GPUArray(shape=(model.nLayers,), dtype=np.float)
+        self._mix_array = GPUArray(shape=(model.nLayers,), dtype=np.float64)
 
     def prepare_each(self, model, wngrid):
         """
