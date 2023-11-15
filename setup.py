@@ -15,7 +15,7 @@ install_requires = ['taurex', 'pycuda',]
 
 entry_points = {'taurex.plugins': 'cuda = taurex_cuda'}
 
-version="1.0.0"
+version="1.0.1"
 
 classifiers = [
     'Development Status :: 4 - Beta',
