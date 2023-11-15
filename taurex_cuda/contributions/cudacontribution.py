@@ -68,6 +68,17 @@ def _contribute_tau_kernal(nlayers, grid_size, with_sigma_offset=False, start_la
     func.prepare('PPPPPPPi')
     return func
 
+        # if (_s_layer < {nlayers})
+        # {{
+        #     path_cache[_s_layer] = path[layer*{nlayers} + _s_layer];
+
+        #     if (grid == 0){{
+        #      printf("\\n LAYERINFO layer: %d slayer: %d, threadIdx: %d path: %.3f \\n",layer, _s_layer, threadIdx.y, path_cache[_s_layer]);
+        #     }}  
+
+        #     dens_cache[_s_layer] = density[_s_layer];
+        # }}
+
 @lru_cache(maxsize=400)
 def _contribute_tau_kernal_II(nlayers, grid_size, with_sigma_offset=False, start_layer=0):
     extra = '+layer'
@@ -81,36 +92,28 @@ def _contribute_tau_kernal_II(nlayers, grid_size, with_sigma_offset=False, start
                                    const int* __restrict__ startK, const int* __restrict__ endK,
                                    const int* __restrict__ density_offset, const int total_layers)
     {{
-        __shared__ double path_cache[{nlayers}];
-        __shared__ double dens_cache[{nlayers}];
 
         const unsigned int grid = (blockIdx.x * blockDim.x) + threadIdx.x;
-        const unsigned int layer = (blockIdx.y * blockDim.y) + threadIdx.y; + {start_layer};
+        const unsigned int layer = (blockIdx.y * blockDim.y) + threadIdx.y + {start_layer};
         
-        unsigned int _s_layer = threadIdx.y*blockDim.x + threadIdx.x;
-                
-
-        if (_s_layer < {nlayers})
-        {{
-            path_cache[_s_layer] = path[layer*{nlayers} + _s_layer];
-            dens_cache[_s_layer] = density[_s_layer];
-        }}
 
         __syncthreads();
+    
 
         if ( grid >= {grid_size} )
             return;
         if (layer >= {nlayers})
             return;
-        
+
+
         const unsigned int _startK = startK[layer];
         const unsigned int _endK = endK[layer];
         const unsigned int _offset = density_offset[layer];
         double _result = 0.0;
         for (unsigned int k = _startK; k < _endK; k++)
         {{
-            double _path = path_cache[k];
-            double _density = dens_cache[k+_offset];
+            double _path = path[layer * {nlayers} + k];
+            double _density = density[k+_offset];
             _result += sigma[(k{extra})*{grid_size} + grid]*_path*_density;
         }}
         dest[layer*{grid_size} + grid] += _result; 
